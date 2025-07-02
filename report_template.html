@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Model Evaluation Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { color: #2c3e50; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+        img { max-width: 100%; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Model Evaluation Report</h1>
+
+    <h2>Class Distributions</h2>
+    <p>{{ class_summary }}</p>
+
+    <h2>Performance Metrics</h2>
+    <table>
+        {% for name, value in metrics.items() %}
+        <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+    </table>
+
+    <h2>Confusion Matrix</h2>
+    <img src="{{ prediction_labels_image }}" alt="Prediction vs True Labels">
+
+    <h2>Top Important Features</h2>
+    <table>
+        <tr><th>Feature</th><th>Importance</th><th>Contribution</th></tr>
+        {% for row in feature_table %}
+        <tr>
+            <td>{{ row.Feature }}</td>
+            <td>{{ "{:.4f}".format(row.Importance) }}</td>
+            <td>{{ "{:.4f}%".format(row.Contribution) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+
+    <img src="{{ feature_importance_image }}" alt="Feature Importance">
+</body>
+</html>
