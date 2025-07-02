@@ -1,4 +1,4 @@
-name: base
+name: iDose_Prediction
 channels:
   - conda-forge
   - defaults
