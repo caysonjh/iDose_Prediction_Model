@@ -16,8 +16,17 @@ from sklearn.metrics import (
 import seaborn as sns
 from scipy.stats import pearsonr 
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score 
-
+from sklearn.decomposition import PCA 
+from sklearn.preprocessing import StandardScaler 
+import umap 
+import seaborn as sns
 from code_groupings import new_feats
+import plotnine as p9
+import hdbscan 
+from scipy.stats import f_oneway
+import shap 
+import joblib
+from datetime import datetime
 
 LESS_RELATED = ['CORNEAL_STUFF', 'REFRACTIVE_DISORDERS', 'GENERAL_OP', 'OCULAR_PROSTHETICS', 'RETINAL_PROCEDURES', 'GENERAL_PROCEDURES']
 DIAGNOSES = ['PREGLAUCOMA', 'OPEN_ANGLE_BORDERLINE', 'ANGLE_CLOSURE', 'OC_HYPERTENSION', 'PRIMARY_OPEN_ANGLE_MILD', 'PRIMARY_OPEN_ANGLE_MOD',
@@ -49,9 +58,10 @@ XGB_PARAMS = {
 
 def main(): 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=str, help='Data file containing medscope information', required=True)
+    parser.add_argument('--data', type=str, help='Data file containing medscope information')
     parser.add_argument('--pred_idos_val', action='store_true', help='If the model should predict the number of iDose patients')
     parser.add_argument('--pred_idos_bool', action='store_true', help='If the model should predict if iDose is/should be used')
+    parser.add_argument('--unsupervised_clusters', action='store_true', help='If unsupervised clustering should be run')
     parser.add_argument('--grid_search', action='store_true', help='If a grid search of parameters should be run')
     parser.add_argument('--data_consolidation_level', type=int, default=1, 
                         help="""How much the data should be consolidated: 
@@ -66,58 +76,91 @@ def main():
     parser.add_argument('--extra_idose', nargs='+', help=f'iDose data to add to the original data')
     parser.add_argument('--extra_non', nargs='+', help=f'Non-iDose data to add to the original data')
     parser.add_argument('--time_features', nargs=2, help=f'Start year and end year to be considered over')
+    parser.add_argument('--predict', help='File containing physicians that you want to predict on')
+    parser.add_argument('--classifier', help='Saved model file to use when predicting')
+    parser.add_argument('--save_model', action='store_true', help='If the model should be saved for future prediction')
     
     args = parser.parse_args()
     
-    try: 
-        if '.csv' == args.data[-4:]: 
-            data = pd.read_csv(args.data)
-            for drop in COLUMNS_TO_REMOVE: 
-                if drop in data.columns:
-                    data = data.drop(drop, axis=1)
+    if args.predict is not None and args.classifier is not None: 
+        clf = joblib.load(args.classifier)
+    else: 
+        if args.data is None: 
+            print('--data must be specified if running --predict with no classifier')
+            exit(1)
             
-            if args.extra_idose is not None:        
-                for extra in args.extra_idose: 
-                    ex_df = pd.read_csv(extra, index_col=0)
-                    if 'NPI / CCN' in ex_df.columns: 
-                        ex_df = ex_df.rename(columns={'NPI / CCN':'NPI'})
-                    for drop in COLUMNS_TO_REMOVE: 
-                        if drop in ex_df.columns:
-                            ex_df = ex_df.drop(drop, axis=1)
-                            
-                    if IDOS_VAL_COLUMN + ' Patients' not in ex_df.columns: 
-                        ex_df[IDOS_VAL_COLUMN + ' Patients'] = 1
-                    
-                    diff = [val for val in data.columns if val not in ex_df.columns]
-                    diff2 = [val for val in ex_df.columns if val not in data.columns]
-                    
-                    if len(diff) > 0 or len(diff2) > 0:
-                        raise Exception(f'Data columns must match: {diff, diff2}')
-                    
-                    data = pd.concat([data, ex_df], axis=0).reset_index(drop=True)
-        elif '.xlsx' == args.data[-5:]:
-            data = pd.read_excel(args.data, index_col=0)
-    except Exception as e: 
-        print('Data file could not be read in properly')
-        print(f'Error: {e}')
-        exit(1)
+        try: 
+            if '.csv' == args.data[-4:]: 
+                data = pd.read_csv(args.data)
+                for drop in COLUMNS_TO_REMOVE: 
+                    if drop in data.columns:
+                        data = data.drop(drop, axis=1)
+                
+                if args.extra_idose is not None:        
+                    for extra in args.extra_idose: 
+                        ex_df = pd.read_csv(extra, index_col=0)
+                        if 'NPI / CCN' in ex_df.columns: 
+                            ex_df = ex_df.rename(columns={'NPI / CCN':'NPI'})
+                        for drop in COLUMNS_TO_REMOVE: 
+                            if drop in ex_df.columns:
+                                ex_df = ex_df.drop(drop, axis=1)
+                                
+                        if IDOS_VAL_COLUMN + ' Patients' not in ex_df.columns: 
+                            ex_df[IDOS_VAL_COLUMN + ' Patients'] = 1
+                        
+                        diff = [val for val in data.columns if val not in ex_df.columns]
+                        diff2 = [val for val in ex_df.columns if val not in data.columns]
+                        
+                        if len(diff) > 0 or len(diff2) > 0:
+                            raise Exception(f'Data columns must match: {diff, diff2}')
+                        
+                        data = pd.concat([data, ex_df], axis=0).reset_index(drop=True)
+            elif '.xlsx' == args.data[-5:]:
+                data = pd.read_excel(args.data, index_col=0)
+        except Exception as e: 
+            print('Data file could not be read in properly')
+            print(f'Error: {e}')
+            exit(1)
+            
+        X, y = prep_data(data, args.data_consolidation_level, 
+                        args.time_features is not None, 
+                        args.time_features[0] if args.time_features else None,
+                        args.time_features[1] if args.time_features else None,
+                        args.custom_feats)
         
-    X, y = prep_data(data, args.data_consolidation_level, 
+        print(f'iDose Features: {sum(y > 0)}')
+        print(f'Non iDose Features: {sum(y == 0)}')
+        
+        if args.pred_idos_val: 
+            clf = pred_idos_val(X, y, args.grid_search, args.data_consolidation_level)
+        elif args.pred_idos_bool: 
+            clf = pred_idos_bool(X, y, args.grid_search, args.data_consolidation_level)
+        elif args.unsupervised_clusters: 
+            run_unsupervised(X, y)
+        else:
+            print('Please select a model to use with --pred_idos_val, --pred_idos_bool, or --unsupervised_clusters')
+            exit(1)
+
+
+    if args.predict is not None: 
+        pred_df = pd.read_csv(args.predict)
+        npi_dict = dict(zip(pred_df['NPI'], pred_df['Name']))
+        for drop in COLUMNS_TO_REMOVE: 
+            if drop in pred_df.columns:
+                pred_df = pred_df.drop(drop, axis=1)
+                
+        X_pred, _ = prep_data(pred_df, args.data_consolidation_level, 
                     args.time_features is not None, 
                     args.time_features[0] if args.time_features else None,
                     args.time_features[1] if args.time_features else None,
                     args.custom_feats)
-    
-    print(f'iDose Features: {sum(y > 0)}')
-    print(f'Non iDose Features: {sum(y == 0)}')
-    
-    if args.pred_idos_val: 
-        pred_idos_val(X, y, args.grid_search, args.data_consolidation_level)
-    elif args.pred_idos_bool: 
-        pred_idos_bool(X, y, args.grid_search, args.data_consolidation_level)
-    else:
-        print('Please select a model to use with --pred_idos_val or --pred_idos_bool')
+        
+        run_prediction(X_pred, clf, npi_dict)    
 
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    if args.save_model: 
+        joblib.dump(clf, f'xgb_model_cons{args.data_consolidation_level}_{timestamp}.pkl')
+        
 
 def combine_cols(df, combine_dict, start_year=None, end_year=None): 
     total_processed = 0
@@ -243,9 +286,6 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
     
     X = std_df.drop(IDOS_VAL_COLUMN, axis=1)
     X = X.div(X.sum(axis=1), axis=0)
-    #print(X.sum(axis=1))
-    #X.columns = [col + ' Total' for col in X.columns]
-    #X['Total Number of Patients'] = X.sum(axis=1)
     
     if time_features:
         time_df = new_df.loc[:, new_df.columns.str.contains('In 20')]
@@ -254,7 +294,23 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
     y = new_df[IDOS_VAL_COLUMN]
     return X, y
  
-   
+
+def run_prediction(X_pred, clf, npi_dict): 
+    preds = clf.predict(X_pred)
+    probs = clf.predict_proba(X_pred)
+    pred_class_probs = probs.max(axis=1)
+    
+    X_pred['Prediction'] = preds 
+    X_pred['Probability'] = pred_class_probs
+    
+    df = X_pred.sort_values(by=['Prediction','Probability'], ascending=[False, False])
+    df['NPI'] = df.index
+    df['Name'] = df['NPI'].map(npi_dict)
+    
+    df = df[['Name', 'NPI', 'Prediction', 'Probability']]
+    df.to_csv('predictions.csv', index=0)
+    
+    
         
 def pred_idos_val(X, y, grid_search, consolidation_level): 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2) 
@@ -277,6 +333,9 @@ def pred_idos_val(X, y, grid_search, consolidation_level):
     co_path = "C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\correlation_plot.png"
     plot_correlation(clf, X_test, y_test, co_path)
     generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', output_path=f'xgb_report_consol{consolidation_level}.pdf', top_n_features=20)
+    
+    clf.fit(X, y)
+    return clf
 
 
 def pred_idos_bool(X, y, grid_search, consolidation_level): 
@@ -304,6 +363,9 @@ def pred_idos_bool(X, y, grid_search, consolidation_level):
     cm_path = "C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\confusion_matrix.png"
     plot_confusion_matrix(clf, X_test, y_test, cm_path) 
     generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'xgb_report_consol{consolidation_level}.pdf', top_n_features=20)
+    
+    clf.fit(X, y)
+    return clf
 
 
 def plot_importance(clf, importance_type, max_num_features): 
@@ -330,9 +392,10 @@ def plot_importance(clf, importance_type, max_num_features):
 
 def get_importances(clf, max_num_features):
     importances = dict(sorted(clf.get_booster().get_score(importance_type='gain').items(), key=lambda item: item[1], reverse=True))
-    #print(list(importances.items())[:10])
+    #print(list(importances.items()))
     plot_importance(clf, importance_type='gain', max_num_features=max_num_features)
     plt.savefig('importances.png') 
+    plt.close()
     
     contributions = np.array(list(importances.values()))/sum(importances.values())*100
     feature_df = pd.DataFrame({
@@ -345,7 +408,12 @@ def get_importances(clf, max_num_features):
    
 
 def plot_confusion_matrix(clf, X_val, y_val, path):
-    ConfusionMatrixDisplay.from_estimator(clf, X_val, y_val, cmap='Blues')
+    #print(clf)
+    y_pred = clf.predict(X_val)
+    cm = confusion_matrix(y_val, y_pred)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+    disp.plot(cmap='Blues')
+    #ConfusionMatrixDisplay.from_estimator(clf, X_val, y_val, cmap='Blues')
     plt.title("Confusion Matrix")
     plt.savefig(path, bbox_inches="tight")
     plt.close()
@@ -374,7 +442,8 @@ def plot_correlation(clf, X_val, y_val, path):
     plt.savefig(path, bbox_inches='tight')
  
  
-def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='xgb_report.pdf', top_n_features=10):     
+def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='xgb_report.pdf', top_n_features=10): 
+    #print(np.unique(X_full['DURYSTA']))    
     y_pred = clf.predict(X_val)
     y_proba = clf.predict_proba(X_val)[:, 1] if hasattr(clf, "predict_proba") else None
     
@@ -402,6 +471,72 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     feature_df = get_importances(clf, top_n_features)
     if feature_df is not None: 
         fi_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\importances.png'
+       
+    explainer = shap.TreeExplainer(clf, X_full, model_output='probability')
+    shap_values = explainer(X_full)
+    shap_matrix = shap_values.values
+    
+    shap.summary_plot(shap_values, X_full, max_display=X_full.shape[1], show=False)
+    shap_summary_filename = f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\shap_summary.png'
+    plt.savefig(shap_summary_filename, bbox_inches='tight')
+    plt.close()
+        
+    shap_df = pd.DataFrame(shap_values.values, columns=X_full.columns)
+    mean_shap = shap_df.abs().mean().sort_values(ascending=False)
+    shap_importance = pd.Series(mean_shap, index=X_full.columns).sort_values(ascending=False)
+    xgb_importance = pd.Series(clf.feature_importances_, index=X_full.columns).sort_values(ascending=False)
+    importance_df = pd.DataFrame({
+        'Feature': xgb_importance.index.sort_values(),
+        'SHAP': shap_importance,
+        'XGB': xgb_importance
+    })
+    
+    feature_df = pd.merge(feature_df, importance_df.drop('XGB',axis=1), on='Feature').sort_values(by='SHAP', ascending=False)
+    
+    top_features = mean_shap.head(3).index.tolist()
+    top_example_tables = {} 
+    top_example_means = {}
+    top_example_maxes = {}
+    top_example_mins = {}
+    
+    for feature in top_features: 
+        i = X_full.columns.get_loc(feature)
+        shap_vals = shap_matrix[:, i]
+        top_indices = np.argsort(np.abs(shap_vals))[::-1][:10]
+        top_example_means[feature] = np.mean(X_full[feature])
+        top_example_maxes[feature] = np.max(X_full[feature])
+        top_example_mins[feature] = np.min(X_full[feature])
+        
+        top_examples = []
+        for idx in top_indices: 
+            top_examples.append({
+                "NPI": X_full.index[idx],
+                "SHAP": shap_vals[idx],
+                "FeatureValue": X_full.iloc[idx, i],
+                "Prediction": clf.predict_proba(X_full)[idx, 1]
+            })
+            
+        top_example_tables[feature] = top_examples
+    
+    shap_force_images = {}
+    for feature in top_features: 
+        i = X_full.columns.get_loc(feature)
+        shap_vals = shap_matrix[:, i]
+        top_idx = np.argmax(np.abs(shap_vals))
+        
+        shap.plots.waterfall(shap_values[top_idx], show=False)
+        filename = f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\shap_force_{feature}.png'
+        plt.savefig(filename, bbox_inches='tight')
+        plt.close()
+        
+        shap_force_images[feature] = filename
+        
+    shap_feature_table = mean_shap.reset_index()
+    shap_feature_table.columns = ['Feature', 'Mean_SHAP']
+    shap_feature_table = shap_feature_table.loc[shap_feature_table['Feature'].isin(top_features)]
+    shap_feature_table = shap_feature_table.to_dict(orient='records')
+    
+    #TODO: PRINT THE MAX, MIN, AND MEAN VALUES FOR EACH FEATURE THAT I"M PRINTING OUT FOR THE SHAP VLAUES TO GET SOME IDEA OF WHAT IS BIG AND SMALL
     
     env = Environment(loader=FileSystemLoader("."))
     template = env.get_template("report_template.html")
@@ -410,7 +545,15 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
         feature_table=feature_df.to_dict(orient="records"),
         prediction_labels_image=image_path,
         feature_importance_image=fi_path, 
-        class_summary=class_summary
+        class_summary=class_summary, 
+        shap_summary_image=shap_summary_filename,
+        shap_feature_table=shap_feature_table,
+        top_features=top_features,
+        shap_force_images=shap_force_images,
+        top_example_tables=top_example_tables,
+        top_example_means=top_example_means, 
+        top_example_maxes=top_example_maxes,
+        top_example_mins=top_example_mins
     )
     
     path_wkhtmltopdf = r'C:\\Users\\chamilton\\Cayson_Dirs\\wkhtmltox\\bin\\wkhtmltopdf.exe'
@@ -418,7 +561,141 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     options = {'enable-local-file-access': None}
     pdfkit.from_string(html_content, output_path, configuration=config, options=options)
     webbrowser.open_new_tab(f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\{output_path}')
+    
 
+def run_unsupervised(X, y):
+    #print(X.columns.to_list())
+    #X = X.sample(n=500)
+    #y = y.loc[X.index]
+    #print(X.shape[0], X.shape[1])
+    y = y > 0
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+    
+    # Standardize 
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X_train)
+    new_scaled = scaler.fit_transform(X_test)
+    
+    # PCA 
+    pca = PCA().fit(X_scaled)
+    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+    n_components = np.searchsorted(cumulative_variance, 0.95) + 1
+    pca = PCA(n_components=n_components)
+    X_pca = pca.fit_transform(X_scaled)
+    new_pca = pca.transform(new_scaled)
+    
+    # UMAP 
+    umap_model = umap.UMAP(
+        n_components=2,
+        n_neighbors=10,
+        min_dist=0.8,
+        metric='euclidean',
+        target_metric='categorical',
+        low_memory=False
+        )
+    #X_umap = umap_model.fit_transform(X_pca, y=y)
+    X_umap = umap_model.fit_transform(X_pca, y_train)
+    new_umap = umap_model.transform(new_pca)
+    
+    # Plot embedding 
+    df = pd.DataFrame({
+        'UMAP1': X_umap[:, 0],
+        'UMAP2': X_umap[:, 1], 
+        'label': y_train.astype(str)
+    })
+    test_df = pd.DataFrame({
+        'UMAP1': new_umap[:, 0],
+        'UMAP2': new_umap[:, 1], 
+        'label': y_test.astype(str)
+    })
+    
+    plot = (
+        p9.ggplot(df, p9.aes(x='UMAP1', y='UMAP2', color='label')) + 
+        p9.geom_point(alpha=0.6, size=2) + 
+        p9.theme_bw() + 
+        p9.scale_color_brewer(type='qual', palette='Set1') + 
+        p9.ggtitle('UMAP projection after PCA') + 
+        p9.labs(color='iDose')
+    )
+    plot.save('UMAP.png')
+    
+    test_plot = (
+        p9.ggplot(test_df, p9.aes(x='UMAP1', y='UMAP2', color='label')) + 
+        p9.geom_point(alpha=0.6, size=2) + 
+        p9.theme_bw() + 
+        p9.scale_color_brewer(type='qual', palette='Set1') + 
+        p9.ggtitle('Test-UMAP projection after PCA') + 
+        p9.labs(color='iDose')
+    )
+    test_plot.save('UMAP_test.png')
+    
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=20, prediction_data=True)
+    cluster_labels = clusterer.fit_predict(new_umap)
+    
+    test_df['cluster'] = cluster_labels.astype(str)
+    test_df['cluster'] = test_df['cluster'].fillna(-1).astype(int).astype(str)
+    # unique_clusters = df['cluster'].unique()
+    # palette = sns.color_palette('tab10', n_colors = len(unique_clusters))
+    # cluster_to_color = {
+    #     c: "#d3d3d3" if c == '-1' else palette[i % len(palette)]
+    #     for i, c in enumerate(unique_clusters)
+    # }
+    
+    cluster_plot = (
+        p9.ggplot(test_df, p9.aes(x='UMAP1', y='UMAP2', color='cluster')) + 
+        p9.geom_point(alpha=0.7, size=2) + 
+        p9.theme_bw() + 
+        #p9.scale_color_manual(values=cluster_to_color) + 
+        p9.ggtitle('HDBSCAN Clusters on UMAP Embedding') + 
+        p9.labs(color='Cluster')
+    )
+    
+    cluster_plot.save('UMAP_clusters.png')
+    
+    cluster_df = X_test
+    cluster_df['cluster'] = cluster_labels.astype(str)
+    
+    print(cluster_df.groupby('cluster').mean())
+    print(cluster_df.groupby('cluster').median())
+    print(cluster_df.groupby('cluster').std())
+    print(cluster_df['cluster'].value_counts())
+    
+    for col in cluster_df.columns[:-1]: 
+        groups = [group[col].values for name, group in cluster_df.groupby('cluster')]
+        stat, p = f_oneway(*groups)
+        if p < 0.05: 
+            print(f'{col}: p={p:.4f} (likely differs across clusters)')
+    
+    print(pd.crosstab(cluster_df['cluster'], y_test))
+    
+    features_to_plot = ['GONIOTOMY',
+                        'SHUNT',
+                        'EXTERNAL_DRAIN_DEV',
+                        'TRABS',
+                        'MIGS',
+                        'CATARACTS',
+                        'LASER_PROCEDURES',
+                        'COMBO_CAT',
+                        'MIOTICS',
+                        'DURYSTA',
+                        'DIAGNOSTIC_IMAGING',
+                        'PROSTAGLANDIN_ANALOGS',
+                        'RHO_KINASE_INHIB']
+    
+    n = len(features_to_plot)
+    ncols = 3
+    nrows = (n+ncols-1)//ncols
+    
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols,4*nrows), squeeze=False)
+    
+    for i, feature in enumerate(features_to_plot): 
+        ax = axes[i // ncols][i % ncols] 
+        sns.violinplot(data=cluster_df, x='cluster', y=feature, ax=ax)
+        ax.set_title(f'{feature} by Cluster')
+    
+    plt.tight_layout()
+    plt.savefig('violin_plots.png')
+    
     
 if __name__ == '__main__': 
     main()

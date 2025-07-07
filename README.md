@@ -48,10 +48,12 @@ First, ensure that `all_data_v2.csv` is located in the folder that you are curre
 In the terminal you opened in VSCode, the program can be run using the following command: 
 
 ```
-python .\pred_idose.py --data .\all_data_v2.csv --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt 
+python .\pred_idose.py --data .\all_data_v2.csv --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt --save_model
 ```
 
-The program will automatically create and open a file called `xgb_report_consol5.pdf`, which contains information on the performance of the model and the feature importances
+The program will automatically create and open a file called `xgb_report_consol5.pdf`, which contains information on the performance of the model and the feature importances. 
+
+The --save_model flag will save the model in the directory you are working in as `xgb_model_cons[consolidation_level]_[date/time].pkl`, which can be used to make predictions on new data to identify new iDose users. 
 
 For more information on what the `--` option flags denote, see the description down below. 
 
@@ -69,9 +71,20 @@ new_feats = {
 }
 ```
 
+## Run Prediction
+
+In order to run prediction on new data, you can run a command like the following: 
+
+```
+python pred_idose.py --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt --predict your_prediction_file.csv --classifier your_model.pkl
+```
+
+If you don't yet have a classifier model saved, you can instead specify the `--data` flag as before, and the model will first train on the data and then use that same model to run predictions. 
+
 ## All Program Functionality 
 
-- `--data`: Must be followed by the name of the file containing the information regarding each physician **(REQUIRED)**
+#### Basic Model Training
+- `--data`: Must be followed by the name of the file containing the information regarding each physician **(REQUIRED unless running `--predict` with `--classifier`)**
 - `--pred_idos_bool`: Indicates that the model will predict a binary yes/no if the physician uses iDose
 - `--pred_idos_val`: Indicates that the model will predict how many iDose cases a doctor has had
 - `--data_consolidation_level`: Indicates how much to consolidate the individual code data into groups, must be followed by a number from 0-5 **(REQUIRED)**
@@ -81,7 +94,18 @@ new_feats = {
     - `3` → Similarity consolidation, unrelated removed, and diagnoses are removed 
     - `4` → Similarity consolidation, unrelated removed, diagnoses removed, and diagnostic imaging is removed
     - `5` → Fully custom feature selection, with selected values provided with `--custom_feats`
-- `--custom_feats`: Must be followed by the file containing the names of the features/groupings that the model should train on **(REQUIRED IF `--data_consolidation_level` 5)**
+- `--custom_feats`: Must be followed by the file containing the names of the features/groupings that the model should train on **(REQUIRED IF `--data_consolidation_level 5`)**
+- `--save_model`: Indicates that you want to save the trained model for running predictions in the future
+
+#### Running Prediction
+- `--predict`: Indicates that you want to run prediction on new data, the filename of which must be included
+- `--classifier`: Indicates that there is a saved classifier that you want to use to make predictions on new data **(REQUIRED if running `--predict` without `--data`)**
+- MUST ALSO INCLUDE: `--pred_idos_bool` or `--pred_idos_val`, `--data` or `--classifier` for prediction
+
+#### Running Unsupervised Learning
+- `--unsupervised_clusters`: Indicates that you want to run unsupervised clustering using the training data supplied by `--data`. This will generate multiple images showing various clustering analyses, but the generating of the full report isn't complete
+
+#### Extra Customizations
 - `--time_features`: Indicates that you want to include statistical features to evaluate the feature trends over time, must include start year and end year (eg. `--time_features 2022 2025`)
 - `--extra_idose`: If you have a separate file with more iDose users that you want to combine with the rest of the dataset
 - `--extra_non`: If you have a separate file with more Non-iDose users that you want to combine with the rest of the dataset
