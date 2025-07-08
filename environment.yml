@@ -1,4 +1,4 @@
-name: base
+name: idose_model
 channels:
   - conda-forge
   - https://repo.anaconda.com/pkgs/main
