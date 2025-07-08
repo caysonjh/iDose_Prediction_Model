@@ -27,6 +27,9 @@ from scipy.stats import f_oneway
 import shap 
 import joblib
 from datetime import datetime
+from sklearn.inspection import partial_dependence, permutation_importance
+from xgboost import plot_tree
+from sklearn.pipeline import make_pipeline
 
 LESS_RELATED = ['CORNEAL_STUFF', 'REFRACTIVE_DISORDERS', 'GENERAL_OP', 'OCULAR_PROSTHETICS', 'RETINAL_PROCEDURES', 'GENERAL_PROCEDURES']
 DIAGNOSES = ['PREGLAUCOMA', 'OPEN_ANGLE_BORDERLINE', 'ANGLE_CLOSURE', 'OC_HYPERTENSION', 'PRIMARY_OPEN_ANGLE_MILD', 'PRIMARY_OPEN_ANGLE_MOD',
@@ -443,7 +446,8 @@ def plot_correlation(clf, X_val, y_val, path):
  
  
 def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='xgb_report.pdf', top_n_features=10): 
-    #print(np.unique(X_full['DURYSTA']))    
+    #### GENERATE METRIC TABLE ####
+    
     y_pred = clf.predict(X_val)
     y_proba = clf.predict_proba(X_val)[:, 1] if hasattr(clf, "predict_proba") else None
     
@@ -467,11 +471,17 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
             "R2 Score": round(r2_score(y_val, y_pred), 4)
         }
     
+    
+    #### FEATURE IMPORTANCE ####
+    
     clf.fit(X_full, y_full)
     feature_df = get_importances(clf, top_n_features)
     if feature_df is not None: 
         fi_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\importances.png'
        
+       
+    #### SHAP ANALYSIS ####
+    
     explainer = shap.TreeExplainer(clf, X_full, model_output='probability')
     shap_values = explainer(X_full)
     shap_matrix = shap_values.values
@@ -536,8 +546,56 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     shap_feature_table = shap_feature_table.loc[shap_feature_table['Feature'].isin(top_features)]
     shap_feature_table = shap_feature_table.to_dict(orient='records')
     
-    #TODO: PRINT THE MAX, MIN, AND MEAN VALUES FOR EACH FEATURE THAT I"M PRINTING OUT FOR THE SHAP VLAUES TO GET SOME IDEA OF WHAT IS BIG AND SMALL
     
+    #### PARTIAL DEPENDENCE PLOT ###
+
+    from sklearn.ensemble import GradientBoostingClassifier 
+    from sklearn.inspection import PartialDependenceDisplay
+    
+    temp_clf = GradientBoostingClassifier(**XGB_PARAMS)
+    temp_clf.fit(X_full, y_full)
+    new_import = pd.DataFrame({
+        'Feature': X_full.columns, 
+        'Importance': temp_clf.feature_importances_
+    }).sort_values(by='Importance', ascending=False)
+    top_six = new_import['Feature'].to_list()[:6]
+
+    fig, axs = plt.subplots(3, 2, figsize=(15,15))
+    PartialDependenceDisplay.from_estimator(temp_clf, X_full, features=top_six, ax=axs, response_method='predict_proba', method='brute')
+    plt.tight_layout()
+    par_dep_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\partial_dependence.png'
+    plt.savefig(par_dep_path)
+    plt.close()
+    
+    
+    #### PERMUTATION IMPORTANCE ####
+    
+    results = permutation_importance(clf, X_full, y_full, n_repeats=10)
+    importances = results.importances_mean 
+    std = results.importances_std 
+    indices = importances.argsort()[::-1]
+    feature_names = X_full.columns[indices]
+    
+    plt.figure(figsize=(8,6))
+    plt.barh(feature_names, importances[indices], xerr=std[indices], align='center')
+    plt.xlabel('Mean Decrease in Accuracy')
+    plt.title('Permutation Importance')
+    plt.gca().invert_yaxis()
+    
+    plt.tight_layout()
+    perm_import_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\permutation_importance.png'
+    plt.savefig(perm_import_path)
+    plt.close()
+    
+    #### TREE VISUALIZATION ####
+    
+    # fig, ax = plt.subplots(figsize=(20,10), dpi=300)
+    # plot_tree(clf, num_trees=0, rankdir='UT', ax=ax)
+    tree_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\xgb_tree.png'
+    plot_xgb_tree_manual(clf, tree_path, 0, (50, 10))
+    
+    #### OUTPUT PDF REPORT ####
+        
     env = Environment(loader=FileSystemLoader("."))
     template = env.get_template("report_template.html")
     html_content = template.render(
@@ -553,7 +611,10 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
         top_example_tables=top_example_tables,
         top_example_means=top_example_means, 
         top_example_maxes=top_example_maxes,
-        top_example_mins=top_example_mins
+        top_example_mins=top_example_mins, 
+        par_dep_path=par_dep_path, 
+        perm_import_path=perm_import_path, 
+        tree_path=tree_path
     )
     
     path_wkhtmltopdf = r'C:\\Users\\chamilton\\Cayson_Dirs\\wkhtmltox\\bin\\wkhtmltopdf.exe'
@@ -561,7 +622,121 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     options = {'enable-local-file-access': None}
     pdfkit.from_string(html_content, output_path, configuration=config, options=options)
     webbrowser.open_new_tab(f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\{output_path}')
+
+import networkx as nx 
+from scipy.special import expit
+
+    # if root is None: 
+    #     roots = [n for n,d in G.in_degree() if d==0]
+    #     root = roots[0] if roots else list(G.nodes)[0]
+        
+    # from functools import lru_cache
+    # @lru_cache(None)
+    # def leaf_count(node): 
+    #     children = list(G.successors(node))
+    #     if not children: 
+    #         return 1
+    #     return sum(leaf_count(c) for c in children)
     
+    # total_leaves = leaf_count(root)
+
+def plot_xgb_tree_manual(clf, tree_path, tree_index=0, figsize=(30,10)): 
+    
+    def parse_node_id(x):
+        if isinstance(x, (int, float)): 
+            return int(x)
+        s = str(x)
+        if '-' in s: 
+            return int(s.split('-',1)[1])
+        return int(s)
+    
+    df = clf.get_booster().trees_to_dataframe()
+    tree_df = df[df['Tree'] == tree_index]
+    
+    G =  nx.DiGraph()
+    
+    for _, row in tree_df.iterrows():
+        node_id = parse_node_id(row['Node'])
+        if row['Feature'] == 'Leaf': 
+            leaf_value = float(row['Gain'])
+            prob = expit(leaf_value)
+            pred = int(prob >= 0.5)
+            label = f'Leaf\nPred: {pred}\nProb: {prob:.2f}'
+        else: 
+            split = float(row['Split'])
+            label = f'{row["Feature"]}\n< {split:.3f}'
+            
+        G.add_node(node_id, label=label)
+        
+    for _, row in tree_df.iterrows(): 
+        if row['Feature'] != 'Leaf': 
+            parent = parse_node_id(row['Node'])
+            yes_id = parse_node_id(row['Yes'])
+            no_id = parse_node_id(row['No'])
+            G.add_edge(parent, yes_id, label='Yes')
+            G.add_edge(parent, no_id, label='No')
+            
+    #print(G)
+    #print(G.nodes)
+    
+    pos = hierarchy_pos(G, root=0)
+        
+    plt.figure(figsize=figsize)
+    
+    nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=5000, node_shape='s')
+    nx.draw_networkx_edges(G, pos)
+    labels = nx.get_node_attributes(G, 'label')
+    nx.draw_networkx_labels(G, pos, labels, font_size=10)
+    
+    edge_labels = nx.get_edge_attributes(G, 'label')
+    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_color='red')
+    
+    plt.axis('off')
+    plt.title(f'XGBoost Tree {tree_index}')
+    plt.tight_layout()
+    plt.savefig(tree_path)
+    plt.close()
+
+def hierarchy_pos(
+    G, root=None, width=1500.0, vert_gap=0.2, vert_loc=0, xcenter=None, sibling_gap=0.15
+):
+    if root is None:
+        root = list(G.nodes)[0]
+    if xcenter is None:
+        xcenter = width / 2.0
+
+    from functools import lru_cache
+
+    @lru_cache(maxsize=None)
+    def leaf_count(node):
+        children = list(G.successors(node))
+        if not children:
+            return 1
+        return sum(leaf_count(child) for child in children)
+
+    def _hierarchy_pos(node, left, right, vert_loc, pos):
+        x = (left + right) / 2.0
+        pos[node] = (x, vert_loc)
+        children = list(G.successors(node))
+        if not children:
+            return pos
+
+        total_leaves = sum(leaf_count(child) for child in children)
+        total_gap = sibling_gap * (len(children)-1) if len(children) > 1 else 0 
+        width_available = (right-left) - total_gap
+        
+        start = left
+        for child in children:
+            child_leaves = leaf_count(child)
+            child_width = (width_available) * (child_leaves / total_leaves)
+            child_left = start
+            child_right = start + child_width
+            pos = _hierarchy_pos(child, child_left, child_right, vert_loc - vert_gap, pos)
+            start += child_width + sibling_gap
+        return pos
+
+    return _hierarchy_pos(root, 0, width, vert_loc, pos={})
+
 
 def run_unsupervised(X, y):
     #print(X.columns.to_list())
@@ -695,6 +870,9 @@ def run_unsupervised(X, y):
     
     plt.tight_layout()
     plt.savefig('violin_plots.png')
+    
+    for cluster, clus_df in cluster_df.groupby('cluster'): 
+        clus_df.to_csv(f'cluster_{cluster}.csv')
     
     
 if __name__ == '__main__': 

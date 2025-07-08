@@ -1,10 +1,10 @@
-name: iDose_Prediction
+name: base
 channels:
   - conda-forge
-  - defaults
   - https://repo.anaconda.com/pkgs/main
   - https://repo.anaconda.com/pkgs/r
   - https://repo.anaconda.com/pkgs/msys2
+  - defaults
 dependencies:
   - _anaconda_depends=2024.10=py312_mkl_0
   - _py-xgboost-mutex=2.0=cpu_0
@@ -403,7 +403,6 @@ dependencies:
   - ruamel_yaml=0.17.21=py312h2bbff1b_0
   - s3fs=2024.6.1=py312haa95532_0
   - scikit-image=0.24.0=py312h0158946_0
-  - scikit-learn=1.5.1=py312h0158946_0
   - scipy=1.13.1=py312hbb039d4_0
   - scrapy=2.11.1=py312haa95532_0
   - seaborn=0.13.2=py312haa95532_0
@@ -505,12 +504,21 @@ dependencies:
   - zstd=1.5.6=h8880b57_0
   - pip:
       - cssselect2==0.8.0
+      - graphviz==0.21
+      - hdbscan==0.8.40
+      - mizani==0.13.5
       - pdfkit==1.0.0
+      - plotnine==0.14.6
       - pydyf==0.11.0
+      - pynndescent==0.5.13
       - pyphen==0.17.2
       - rapidfuzz==3.13.0
+      - scikit-learn==1.7.0
+      - shap==0.48.0
+      - slicer==0.0.8
       - tinycss2==1.4.0
       - tinyhtml5==2.0.0
+      - umap-learn==0.5.9.post2
       - weasyprint==65.1
       - zopfli==0.2.3.post1
 prefix: C:\Users\chamilton\AppData\Local\anaconda3
