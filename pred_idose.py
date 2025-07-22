@@ -84,8 +84,6 @@ def main():
     parser.add_argument('--save_model', action='store_true', help='If the model should be saved for future prediction')
     parser.add_argument('--totals', action='store_true', help='Whether to use the raw total values instead of proportions for features', default=False)
     parser.add_argument('--props', action='store_true', help='Whether to use the proportions for feature values', default=True)
-    parser.add_argument('--mac_state', help='File containing state to MAC codes')
-    parser.add_argument('--cms_state', help='File containing npi to state information')
     
     args = parser.parse_args()
     
@@ -136,15 +134,14 @@ def main():
                         args.custom_feats, 
                         args.props, args.totals)
         
-        if args.mac_state is not None and args.cms_state is not None: 
-            npi_to_state = pd.read_csv(args.cms_state).set_index('NPI')['State'].to_dict()
-            #print(npi_to_state)
-            state_to_mac = pd.read_csv(args.mac_state).set_index('State')['MAC'].to_dict()
-            
-            X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
-            df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
-            X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
-            print(X)
+        npi_to_state = pd.read_csv('npi_to_state.csv').set_index('NPI')['State'].to_dict()
+        #print(npi_to_state)
+        state_to_mac = pd.read_csv('state_to_mac.csv').set_index('State')['MAC'].to_dict()
+        
+        X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
+        df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
+        X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
+        #print(X)
             
         
         print(f'iDose Features: {sum(y > 0)}')
