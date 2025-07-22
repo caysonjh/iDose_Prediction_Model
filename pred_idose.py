@@ -82,6 +82,8 @@ def main():
     parser.add_argument('--predict', help='File containing physicians that you want to predict on')
     parser.add_argument('--classifier', help='Saved model file to use when predicting')
     parser.add_argument('--save_model', action='store_true', help='If the model should be saved for future prediction')
+    parser.add_argument('--totals', action='store_true', help='Whether to use the raw total values instead of proportions for features', default=False)
+    parser.add_argument('--props', action='store_true', help='Whether to use the proportions for feature values', default=True)
     
     args = parser.parse_args()
     
@@ -129,7 +131,8 @@ def main():
                         args.time_features is not None, 
                         args.time_features[0] if args.time_features else None,
                         args.time_features[1] if args.time_features else None,
-                        args.custom_feats)
+                        args.custom_feats, 
+                        args.props, args.totals)
         
         print(f'iDose Features: {sum(y > 0)}')
         print(f'Non iDose Features: {sum(y == 0)}')
@@ -156,7 +159,8 @@ def main():
                     args.time_features is not None, 
                     args.time_features[0] if args.time_features else None,
                     args.time_features[1] if args.time_features else None,
-                    args.custom_feats)
+                    args.custom_feats,
+                    args.props, args.totals)
         
         run_prediction(X_pred, clf, npi_dict)    
 
@@ -205,7 +209,7 @@ def calculate_time_features(X, start_year, end_year):
     return time_features
 
 
-def prep_data(data, data_consolidation_level, time_features=False, start_year=None, end_year=None, custom_feats=None):     
+def prep_data(data, data_consolidation_level, time_features=False, start_year=None, end_year=None, custom_feats=None, props=True, totals=False):     
     df = data.set_index('NPI').drop('Name', axis=1).replace('<11', 5).astype(int)
     
     if time_features:
@@ -288,12 +292,17 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
     std_df = new_df.loc[:, ~new_df.columns.str.contains(' 20')]
     
     # Making the features a proportion of all the features still included 
-    X = std_df.drop(IDOS_VAL_COLUMN, axis=1).astype(float)
-    prop_df = X.div(X.sum(axis=1), axis=0)
-    X.columns = [f'{col} Total' for col in X.columns]
-    prop_df.columns = [f'{col} Proportion' for col in prop_df.columns]
-    #X = X.join(prop_df)
-    X = prop_df
+    if props: 
+        X = std_df.drop(IDOS_VAL_COLUMN, axis=1).astype(float)
+        prop_df = X.div(X.sum(axis=1), axis=0)
+        prop_df.columns = [f'{col} Proportion' for col in prop_df.columns]
+        if not totals:
+            X = prop_df
+    if totals: 
+        X.columns = [f'{col} Total' for col in X.columns]
+    if props and totals: 
+        X = X.join(prop_df)
+    
     
     if time_features:
         time_df = new_df.loc[:, new_df.columns.str.contains('In 20')]
