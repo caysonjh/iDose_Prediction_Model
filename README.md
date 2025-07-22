@@ -76,7 +76,7 @@ new_feats = {
 In order to run prediction on new data, you can run a command like the following: 
 
 ```
-python pred_idose.py --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt --predict your_prediction_file.csv --classifier your_model.pkl
+python pred_idose.py --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt --predict your_prediction_file.csv --classifier your_model.pkl --preds
 ```
 
 If you don't yet have a classifier model saved, you can instead specify the `--data` flag as before, and the model will first train on the data and then use that same model to run predictions. 
@@ -94,6 +94,8 @@ If you don't yet have a classifier model saved, you can instead specify the `--d
     - `3` → Similarity consolidation, unrelated removed, and diagnoses are removed 
     - `4` → Similarity consolidation, unrelated removed, diagnoses removed, and diagnostic imaging is removed
     - `5` → Fully custom feature selection, with selected values provided with `--custom_feats`
+- `--props`: Indicates that we want to treat each feature as a proportion of all the doctors values
+- `--totals`: Indicates that we want to treat each feature as the raw total value for each feature
 - `--custom_feats`: Must be followed by the file containing the names of the features/groupings that the model should train on **(REQUIRED IF `--data_consolidation_level 5`)**
 - `--save_model`: Indicates that you want to save the trained model for running predictions in the future
 
