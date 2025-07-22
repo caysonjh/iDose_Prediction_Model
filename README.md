@@ -34,7 +34,13 @@ Open the folder that was downloaded to your commputer in VSCode. Create a termin
 
 ```
 conda env create -f environment.yml
-conda activate iDose_Prediction
+conda activate idose_model
+pip install xgboost
+pip install pdfkit
+pip install plotnine
+pip install 
+conda install hdbscan
+pip install shap
 ```
 
 You are now ready to run the program
@@ -51,7 +57,7 @@ In the terminal you opened in VSCode, the program can be run using the following
 python .\pred_idose.py --data .\all_data_v2.csv --pred_idos_bool --data_consolidation_level 5 --custom_feats custom_features.txt --save_model
 ```
 
-The program will automatically create and open a file called `xgb_report_consol5.pdf`, which contains information on the performance of the model and the feature importances. 
+The program will automatically create and open a file called `xgb_report_consol5_{date/time}.pdf`, which contains information on the performance of the model and the feature importances. 
 
 The --save_model flag will save the model in the directory you are working in as `xgb_model_cons[consolidation_level]_[date/time].pkl`, which can be used to make predictions on new data to identify new iDose users. 
 

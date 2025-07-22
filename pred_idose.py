@@ -84,6 +84,8 @@ def main():
     parser.add_argument('--save_model', action='store_true', help='If the model should be saved for future prediction')
     parser.add_argument('--totals', action='store_true', help='Whether to use the raw total values instead of proportions for features', default=False)
     parser.add_argument('--props', action='store_true', help='Whether to use the proportions for feature values', default=True)
+    parser.add_argument('--mac_state', help='File containing state to MAC codes')
+    parser.add_argument('--cms_state', help='File containing npi to state information')
     
     args = parser.parse_args()
     
@@ -133,6 +135,17 @@ def main():
                         args.time_features[1] if args.time_features else None,
                         args.custom_feats, 
                         args.props, args.totals)
+        
+        if args.mac_state is not None and args.cms_state is not None: 
+            npi_to_state = pd.read_csv(args.cms_state).set_index('NPI')['State'].to_dict()
+            #print(npi_to_state)
+            state_to_mac = pd.read_csv(args.mac_state).set_index('State')['MAC'].to_dict()
+            
+            X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
+            df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
+            X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
+            print(X)
+            
         
         print(f'iDose Features: {sum(y > 0)}')
         print(f'Non iDose Features: {sum(y == 0)}')
@@ -192,6 +205,17 @@ def combine_cols(df, combine_dict, start_year=None, end_year=None):
     new_df[IDOS_VAL_COLUMN] = df[IDOS_VAL_COLUMN]
     return new_df, total_processed, which_processed
 
+def get_macs(state_dict, mac_dict, phys_list): 
+    macs = []
+    for phys in phys_list: 
+        if phys not in state_dict.keys(): 
+            print(f'Physician {phys} not in state dictionary')
+            macs.append('Unknown')
+        else:
+            state = state_dict[phys]
+            mac = mac_dict[state]
+            macs.append(mac)
+    return macs
 
 def calculate_time_features(X, start_year, end_year): 
     features = X.columns.str.replace(r' In 20\d{2}','', regex=True).drop_duplicates()
@@ -370,7 +394,7 @@ def pred_idos_bool(X, y, grid_search, consolidation_level):
         clf = grid.best_estimator_
     else: 
         clf = xgb.XGBClassifier(objective='binary:logistic', n_estimators=XGB_PARAMS['n_estimators'], subsample=XGB_PARAMS['subsample'],
-                                max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'])
+                                max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'], enable_categorical=True)
         clf.fit(X_train, y_train)
     
     # y_pred = clf.predict(X_test)
