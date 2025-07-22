@@ -287,8 +287,13 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
             
     std_df = new_df.loc[:, ~new_df.columns.str.contains(' 20')]
     
-    X = std_df.drop(IDOS_VAL_COLUMN, axis=1)
-    X = X.div(X.sum(axis=1), axis=0)
+    # Making the features a proportion of all the features still included 
+    X = std_df.drop(IDOS_VAL_COLUMN, axis=1).astype(float)
+    prop_df = X.div(X.sum(axis=1), axis=0)
+    X.columns = [f'{col} Total' for col in X.columns]
+    prop_df.columns = [f'{col} Proportion' for col in prop_df.columns]
+    #X = X.join(prop_df)
+    X = prop_df
     
     if time_features:
         time_df = new_df.loc[:, new_df.columns.str.contains('In 20')]
@@ -333,7 +338,7 @@ def pred_idos_val(X, y, grid_search, consolidation_level):
                                 max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'])
         clf.fit(X_train, y_train)
     
-    co_path = "C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\correlation_plot.png"
+    co_path = f"{os.getcwd()}\\correlation_plot.png"
     plot_correlation(clf, X_test, y_test, co_path)
     generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', output_path=f'xgb_report_consol{consolidation_level}.pdf', top_n_features=20)
     
@@ -363,9 +368,11 @@ def pred_idos_bool(X, y, grid_search, consolidation_level):
     # acc = clf.score(X_test, y_test)
     #print(acc)
     #get_importances(clf, 10)
-    cm_path = "C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\confusion_matrix.png"
+    cm_path = f"{os.getcwd()}\\confusion_matrix.png"
     plot_confusion_matrix(clf, X_test, y_test, cm_path) 
-    generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'xgb_report_consol{consolidation_level}.pdf', top_n_features=20)
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
+    generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
     
     clf.fit(X, y)
     return clf
@@ -477,7 +484,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     clf.fit(X_full, y_full)
     feature_df = get_importances(clf, top_n_features)
     if feature_df is not None: 
-        fi_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\importances.png'
+        fi_path = f'{os.getcwd()}\\importances.png'
        
        
     #### SHAP ANALYSIS ####
@@ -487,7 +494,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     shap_matrix = shap_values.values
     
     shap.summary_plot(shap_values, X_full, max_display=X_full.shape[1], show=False)
-    shap_summary_filename = f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\shap_summary.png'
+    shap_summary_filename = f'{os.getcwd()}\\shap_summary.png'
     plt.savefig(shap_summary_filename, bbox_inches='tight')
     plt.close()
         
@@ -535,7 +542,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
         top_idx = np.argmax(np.abs(shap_vals))
         
         shap.plots.waterfall(shap_values[top_idx], show=False)
-        filename = f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\shap_force_{feature}.png'
+        filename = f'{os.getcwd()}\\shap_force_{feature}.png'
         plt.savefig(filename, bbox_inches='tight')
         plt.close()
         
@@ -563,7 +570,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     fig, axs = plt.subplots(3, 2, figsize=(15,15))
     PartialDependenceDisplay.from_estimator(temp_clf, X_full, features=top_six, ax=axs, response_method='predict_proba', method='brute')
     plt.tight_layout()
-    par_dep_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\partial_dependence.png'
+    par_dep_path = f'{os.getcwd()}\\partial_dependence.png'
     plt.savefig(par_dep_path)
     plt.close()
     
@@ -583,7 +590,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     plt.gca().invert_yaxis()
     
     plt.tight_layout()
-    perm_import_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\permutation_importance.png'
+    perm_import_path = f'{os.getcwd()}\\permutation_importance.png'
     plt.savefig(perm_import_path)
     plt.close()
     
@@ -591,7 +598,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     
     # fig, ax = plt.subplots(figsize=(20,10), dpi=300)
     # plot_tree(clf, num_trees=0, rankdir='UT', ax=ax)
-    tree_path = 'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\xgb_tree.png'
+    tree_path = f'{os.getcwd()}\\xgb_tree.png'
     plot_xgb_tree_manual(clf, tree_path, 0, (50, 10))
     
     #### OUTPUT PDF REPORT ####
@@ -617,11 +624,11 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
         tree_path=tree_path
     )
     
-    path_wkhtmltopdf = r'C:\\Users\\chamilton\\Cayson_Dirs\\wkhtmltox\\bin\\wkhtmltopdf.exe'
+    path_wkhtmltopdf = r'wkhtmltopdf.exe'
     config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
     options = {'enable-local-file-access': None}
     pdfkit.from_string(html_content, output_path, configuration=config, options=options)
-    webbrowser.open_new_tab(f'C:\\Users\\chamilton\\Cayson_Dirs\\idose_model\\{output_path}')
+    webbrowser.open_new_tab(f'{os.getcwd()}\\{output_path}')
 
 import networkx as nx 
 from scipy.special import expit

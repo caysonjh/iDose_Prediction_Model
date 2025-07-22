@@ -17,7 +17,7 @@ git --version
 You should see a confirmation of the version that is installed. Then, run this command to clone this directory onto your local machine: 
 
 ```
-git clone git@github.com:caysonjh/iDose_Prediction_Model.git
+git clone https://github.com/caysonjh/iDose_Prediction_Model.git
 ```
 
 ### 2. Install Anaconda
@@ -26,15 +26,20 @@ Then, download the latest version of [Anaconda](https://www.anaconda.com/downloa
 
 ### 3. Install VSCode
 
-Once Anaconda has been installed, install [VSCode](https://code.visualstudio.com/download), which serves as a code/text editor and will be the platform through which we run the program. 
+Once Anaconda has been installed, install [VSCode](https://code.visualstudio.com/download), which serves as a code/text editor and will be the platform through which we run the program. Open VSCode through the anaconda navigator. 
 
 ### 4. Install Required Packages
 
-Open the folder that was downloaded to your commputer in VSCode. Create a terminal by selecting **Terminal** → **New Terminal**. The required packages can be installed by running the following 2 commands: 
+Open the folder that was downloaded to your commputer in VSCode. Create a terminal by selecting **Terminal** → **New Terminal**. The required packages can be installed by running the following commands: 
 
 ```
 conda env create -f environment.yml
 conda activate iDose_Prediction
+pip install plotnine
+pip install shap
+pip install xgboost
+pip install umap 
+pip install hdbscan
 ```
 
 You are now ready to run the program
