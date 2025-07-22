@@ -521,4 +521,7 @@ dependencies:
       - umap-learn==0.5.9.post2
       - weasyprint==65.1
       - zopfli==0.2.3.post1
+      - umap==0.1.1
+      - umap-learn==0.5.9.post2
+      - hdbscan==0.8.40
 prefix: C:\Users\chamilton\AppData\Local\anaconda3
