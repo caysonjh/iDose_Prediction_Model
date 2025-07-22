@@ -35,11 +35,6 @@ Open the folder that was downloaded to your commputer in VSCode. Create a termin
 ```
 conda env create -f environment.yml
 conda activate iDose_Prediction
-pip install plotnine
-pip install shap
-pip install xgboost
-pip install umap 
-pip install hdbscan
 ```
 
 You are now ready to run the program
