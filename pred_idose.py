@@ -134,7 +134,7 @@ def main():
                         args.custom_feats, 
                         args.props, args.totals)
         
-        npi_to_state = pd.read_csv('npi_to_state.csv').set_index('NPI')['State'].to_dict()
+        npi_to_state = pd.read_csv('npi_states.csv').set_index('NPI')['State'].to_dict()
         #print(npi_to_state)
         state_to_mac = pd.read_csv('state_to_mac.csv').set_index('State')['MAC'].to_dict()
         
@@ -209,6 +209,8 @@ def get_macs(state_dict, mac_dict, phys_list):
             print(f'Physician {phys} not in state dictionary')
             macs.append('Unknown')
         else:
+            # with open('npi_states.csv', 'a') as o: 
+            #     o.write(f'{phys},{state_dict[phys]}\n')
             state = state_dict[phys]
             mac = mac_dict[state]
             macs.append(mac)
