@@ -133,21 +133,18 @@ def main():
                         args.time_features[1] if args.time_features else None,
                         args.custom_feats, 
                         args.props, args.totals)
-        
-        npi_to_state = pd.read_csv('npi_states.csv').set_index('NPI')['State'].to_dict()
-        #print(npi_to_state)
-        state_to_mac = pd.read_csv('state_to_mac.csv').set_index('State')['MAC'].to_dict()
-        
-        #TODO Make it so MACs can be selected just like every other feature
-        X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
-        df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
-        X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
-        #print(X)
             
         
         print(f'iDose Features: {sum(y > 0)}')
         print(f'Non iDose Features: {sum(y == 0)}')
         
+        if not os.path.isdir('images'): 
+            os.makedirs('images')
+        if not os.path.isdir('reports'): 
+            os.makedirs('reports')
+        if not os.path.isdir('models'): 
+            os.makedirs('models')
+            
         if args.pred_idos_val: 
             clf = pred_idos_val(X, y, args.grid_search, args.data_consolidation_level)
         elif args.pred_idos_bool: 
@@ -177,7 +174,7 @@ def main():
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     if args.save_model: 
-        joblib.dump(clf, f'xgb_model_cons{args.data_consolidation_level}_{timestamp}.pkl')
+        joblib.dump(clf, f'models\\xgb_model_cons{args.data_consolidation_level}_{timestamp}.pkl')
         
 
 def combine_cols(df, combine_dict, start_year=None, end_year=None): 
@@ -235,6 +232,7 @@ def calculate_time_features(X, start_year, end_year):
 
 def prep_data(data, data_consolidation_level, time_features=False, start_year=None, end_year=None, custom_feats=None, props=True, totals=False):     
     df = data.set_index('NPI').drop('Name', axis=1).replace('<11', 5).astype(int)
+    macs = False
     
     if time_features:
         time_df = pd.DataFrame()
@@ -290,7 +288,9 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
             with open(custom_feats, 'r') as infile: 
                 for line in infile:
                     line = line.strip()
-                    if line not in new_feats.keys(): 
+                    if line == 'MACS': 
+                        macs = True
+                    elif line not in new_feats.keys(): 
                         print(f'Invalid Feature: {line}')
                         print(f'Available Features: {new_feats.keys()}')
                     else: 
@@ -326,7 +326,14 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
         X.columns = [f'{col} Total' for col in X.columns]
     if props and totals: 
         X = X.join(prop_df)
-    
+        
+    if macs: 
+        npi_to_state = pd.read_csv('npi_states.csv').set_index('NPI')['State'].to_dict()
+        state_to_mac = pd.read_csv('state_to_mac.csv').set_index('State')['MAC'].to_dict()
+        
+        X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
+        df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
+        X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
     
     if time_features:
         time_df = new_df.loc[:, new_df.columns.str.contains('In 20')]
@@ -371,9 +378,11 @@ def pred_idos_val(X, y, grid_search, consolidation_level):
                                 max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'])
         clf.fit(X_train, y_train)
     
-    co_path = f"{os.getcwd()}\\correlation_plot.png"
+    co_path = f"{os.getcwd()}\\images\\correlation_plot.png"
     plot_correlation(clf, X_test, y_test, co_path)
-    generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', output_path=f'xgb_report_consol{consolidation_level}.pdf', top_n_features=20)
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
+    generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', output_path=f'reports\\xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
     
     clf.fit(X, y)
     return clf
@@ -401,11 +410,11 @@ def pred_idos_bool(X, y, grid_search, consolidation_level):
     # acc = clf.score(X_test, y_test)
     #print(acc)
     #get_importances(clf, 10)
-    cm_path = f"{os.getcwd()}\\confusion_matrix.png"
+    cm_path = f"{os.getcwd()}\\images\\confusion_matrix.png"
     plot_confusion_matrix(clf, X_test, y_test, cm_path) 
     current_datetime = datetime.now()
     formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
-    generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
+    generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'reports\\xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
     
     clf.fit(X, y)
     return clf
@@ -437,7 +446,7 @@ def get_importances(clf, max_num_features):
     importances = dict(sorted(clf.get_booster().get_score(importance_type='gain').items(), key=lambda item: item[1], reverse=True))
     #print(list(importances.items()))
     plot_importance(clf, importance_type='gain', max_num_features=max_num_features)
-    plt.savefig('importances.png') 
+    plt.savefig('images\\importances.png') 
     plt.close()
     
     contributions = np.array(list(importances.values()))/sum(importances.values())*100
@@ -485,7 +494,8 @@ def plot_correlation(clf, X_val, y_val, path):
     plt.savefig(path, bbox_inches='tight')
  
  
-def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='xgb_report.pdf', top_n_features=10): 
+def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='reports\\xgb_report.pdf', top_n_features=10): 
+    
     #### GENERATE METRIC TABLE ####
     
     y_pred = clf.predict(X_val)
@@ -517,7 +527,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     clf.fit(X_full, y_full)
     feature_df = get_importances(clf, top_n_features)
     if feature_df is not None: 
-        fi_path = f'{os.getcwd()}\\importances.png'
+        fi_path = f'{os.getcwd()}\\images\\importances.png'
        
        
     #### SHAP ANALYSIS ####
@@ -527,7 +537,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     shap_matrix = shap_values.values
     
     shap.summary_plot(shap_values, X_full, max_display=X_full.shape[1], show=False)
-    shap_summary_filename = f'{os.getcwd()}\\shap_summary.png'
+    shap_summary_filename = f'{os.getcwd()}\\images\\shap_summary.png'
     plt.savefig(shap_summary_filename, bbox_inches='tight')
     plt.close()
         
@@ -575,7 +585,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
         top_idx = np.argmax(np.abs(shap_vals))
         
         shap.plots.waterfall(shap_values[top_idx], show=False)
-        filename = f'{os.getcwd()}\\shap_force_{feature}.png'
+        filename = f'{os.getcwd()}\\images\\shap_force_{feature}.png'
         plt.savefig(filename, bbox_inches='tight')
         plt.close()
         
@@ -603,7 +613,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     fig, axs = plt.subplots(3, 2, figsize=(15,15))
     PartialDependenceDisplay.from_estimator(temp_clf, X_full, features=top_six, ax=axs, response_method='predict_proba', method='brute')
     plt.tight_layout()
-    par_dep_path = f'{os.getcwd()}\\partial_dependence.png'
+    par_dep_path = f'{os.getcwd()}\\images\\partial_dependence.png'
     plt.savefig(par_dep_path)
     plt.close()
     
@@ -623,7 +633,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     plt.gca().invert_yaxis()
     
     plt.tight_layout()
-    perm_import_path = f'{os.getcwd()}\\permutation_importance.png'
+    perm_import_path = f'{os.getcwd()}\\images\\permutation_importance.png'
     plt.savefig(perm_import_path)
     plt.close()
     
@@ -631,7 +641,7 @@ def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_typ
     
     # fig, ax = plt.subplots(figsize=(20,10), dpi=300)
     # plot_tree(clf, num_trees=0, rankdir='UT', ax=ax)
-    tree_path = f'{os.getcwd()}\\xgb_tree.png'
+    tree_path = f'{os.getcwd()}\\images\\xgb_tree.png'
     plot_xgb_tree_manual(clf, tree_path, 0, (50, 10))
     
     #### OUTPUT PDF REPORT ####
@@ -832,7 +842,7 @@ def run_unsupervised(X, y):
         p9.ggtitle('UMAP projection after PCA') + 
         p9.labs(color='iDose')
     )
-    plot.save('UMAP.png')
+    plot.save('images\\UMAP.png')
     
     test_plot = (
         p9.ggplot(test_df, p9.aes(x='UMAP1', y='UMAP2', color='label')) + 
@@ -842,7 +852,7 @@ def run_unsupervised(X, y):
         p9.ggtitle('Test-UMAP projection after PCA') + 
         p9.labs(color='iDose')
     )
-    test_plot.save('UMAP_test.png')
+    test_plot.save('images\\UMAP_test.png')
     
     clusterer = hdbscan.HDBSCAN(min_cluster_size=20, prediction_data=True)
     cluster_labels = clusterer.fit_predict(new_umap)
@@ -865,7 +875,7 @@ def run_unsupervised(X, y):
         p9.labs(color='Cluster')
     )
     
-    cluster_plot.save('UMAP_clusters.png')
+    cluster_plot.save('images\\UMAP_clusters.png')
     
     cluster_df = X_test
     cluster_df['cluster'] = cluster_labels.astype(str)
@@ -909,7 +919,7 @@ def run_unsupervised(X, y):
         ax.set_title(f'{feature} by Cluster')
     
     plt.tight_layout()
-    plt.savefig('violin_plots.png')
+    plt.savefig('images\\violin_plots.png')
     
     for cluster, clus_df in cluster_df.groupby('cluster'): 
         clus_df.to_csv(f'cluster_{cluster}.csv')
