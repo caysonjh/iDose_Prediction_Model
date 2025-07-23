@@ -340,6 +340,7 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
         X = pd.concat([X, calculate_time_features(time_df, start_year, end_year)], axis=1)
         
     y = new_df[IDOS_VAL_COLUMN]
+    X = X.fillna(0)
     return X, y
  
 
