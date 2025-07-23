@@ -138,6 +138,7 @@ def main():
         #print(npi_to_state)
         state_to_mac = pd.read_csv('state_to_mac.csv').set_index('State')['MAC'].to_dict()
         
+        #TODO Make it so MACs can be selected just like every other feature
         X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
         df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
         X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
