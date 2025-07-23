@@ -854,11 +854,11 @@ def run_unsupervised(X, y):
     )
     test_plot.save('images\\UMAP_test.png')
     
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=20, prediction_data=True)
-    cluster_labels = clusterer.fit_predict(new_umap)
+    #clusterer = hdbscan.HDBSCAN(min_cluster_size=20, prediction_data=True)
+    #cluster_labels = clusterer.fit_predict(new_umap)
     
-    test_df['cluster'] = cluster_labels.astype(str)
-    test_df['cluster'] = test_df['cluster'].fillna(-1).astype(int).astype(str)
+    #test_df['cluster'] = cluster_labels.astype(str)
+    #test_df['cluster'] = test_df['cluster'].fillna(-1).astype(int).astype(str)
     # unique_clusters = df['cluster'].unique()
     # palette = sns.color_palette('tab10', n_colors = len(unique_clusters))
     # cluster_to_color = {
@@ -866,63 +866,63 @@ def run_unsupervised(X, y):
     #     for i, c in enumerate(unique_clusters)
     # }
     
-    cluster_plot = (
-        p9.ggplot(test_df, p9.aes(x='UMAP1', y='UMAP2', color='cluster')) + 
-        p9.geom_point(alpha=0.7, size=2) + 
-        p9.theme_bw() + 
-        #p9.scale_color_manual(values=cluster_to_color) + 
-        p9.ggtitle('HDBSCAN Clusters on UMAP Embedding') + 
-        p9.labs(color='Cluster')
-    )
+    # cluster_plot = (
+    #     p9.ggplot(test_df, p9.aes(x='UMAP1', y='UMAP2', color='cluster')) + 
+    #     p9.geom_point(alpha=0.7, size=2) + 
+    #     p9.theme_bw() + 
+    #     #p9.scale_color_manual(values=cluster_to_color) + 
+    #     p9.ggtitle('HDBSCAN Clusters on UMAP Embedding') + 
+    #     p9.labs(color='Cluster')
+    # )
     
-    cluster_plot.save('images\\UMAP_clusters.png')
+    # cluster_plot.save('images\\UMAP_clusters.png')
     
-    cluster_df = X_test
-    cluster_df['cluster'] = cluster_labels.astype(str)
+    # cluster_df = X_test
+    # cluster_df['cluster'] = cluster_labels.astype(str)
     
-    print(cluster_df.groupby('cluster').mean())
-    print(cluster_df.groupby('cluster').median())
-    print(cluster_df.groupby('cluster').std())
-    print(cluster_df['cluster'].value_counts())
+    # print(cluster_df.groupby('cluster').mean())
+    # print(cluster_df.groupby('cluster').median())
+    # print(cluster_df.groupby('cluster').std())
+    # print(cluster_df['cluster'].value_counts())
     
-    for col in cluster_df.columns[:-1]: 
-        groups = [group[col].values for name, group in cluster_df.groupby('cluster')]
-        stat, p = f_oneway(*groups)
-        if p < 0.05: 
-            print(f'{col}: p={p:.4f} (likely differs across clusters)')
+    # for col in cluster_df.columns[:-1]: 
+    #     groups = [group[col].values for name, group in cluster_df.groupby('cluster')]
+    #     stat, p = f_oneway(*groups)
+    #     if p < 0.05: 
+    #         print(f'{col}: p={p:.4f} (likely differs across clusters)')
     
-    print(pd.crosstab(cluster_df['cluster'], y_test))
+    # print(pd.crosstab(cluster_df['cluster'], y_test))
     
-    features_to_plot = ['GONIOTOMY',
-                        'SHUNT',
-                        'EXTERNAL_DRAIN_DEV',
-                        'TRABS',
-                        'MIGS',
-                        'CATARACTS',
-                        'LASER_PROCEDURES',
-                        'COMBO_CAT',
-                        'MIOTICS',
-                        'DURYSTA',
-                        'DIAGNOSTIC_IMAGING',
-                        'PROSTAGLANDIN_ANALOGS',
-                        'RHO_KINASE_INHIB']
+    # features_to_plot = ['GONIOTOMY',
+    #                     'SHUNT',
+    #                     'EXTERNAL_DRAIN_DEV',
+    #                     'TRABS',
+    #                     'MIGS',
+    #                     'CATARACTS',
+    #                     'LASER_PROCEDURES',
+    #                     'COMBO_CAT',
+    #                     'MIOTICS',
+    #                     'DURYSTA',
+    #                     'DIAGNOSTIC_IMAGING',
+    #                     'PROSTAGLANDIN_ANALOGS',
+    #                     'RHO_KINASE_INHIB']
     
-    n = len(features_to_plot)
-    ncols = 3
-    nrows = (n+ncols-1)//ncols
+    # n = len(features_to_plot)
+    # ncols = 3
+    # nrows = (n+ncols-1)//ncols
     
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols,4*nrows), squeeze=False)
+    # fig, axes = plt.subplots(nrows, ncols, figsize=(5*ncols,4*nrows), squeeze=False)
     
-    for i, feature in enumerate(features_to_plot): 
-        ax = axes[i // ncols][i % ncols] 
-        sns.violinplot(data=cluster_df, x='cluster', y=feature, ax=ax)
-        ax.set_title(f'{feature} by Cluster')
+    # for i, feature in enumerate(features_to_plot): 
+    #     ax = axes[i // ncols][i % ncols] 
+    #     sns.violinplot(data=cluster_df, x='cluster', y=feature, ax=ax)
+    #     ax.set_title(f'{feature} by Cluster')
     
-    plt.tight_layout()
-    plt.savefig('images\\violin_plots.png')
+    # plt.tight_layout()
+    # plt.savefig('images\\violin_plots.png')
     
-    for cluster, clus_df in cluster_df.groupby('cluster'): 
-        clus_df.to_csv(f'cluster_{cluster}.csv')
+    # for cluster, clus_df in cluster_df.groupby('cluster'): 
+    #     clus_df.to_csv(f'cluster_{cluster}.csv')
     
     
 if __name__ == '__main__': 

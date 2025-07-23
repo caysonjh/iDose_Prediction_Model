@@ -26,7 +26,7 @@ Then, download the latest version of [Anaconda](https://www.anaconda.com/downloa
 
 ### 3. Install VSCode
 
-Once Anaconda has been installed, install [VSCode](https://code.visualstudio.com/download), which serves as a code/text editor and will be the platform through which we run the program. Open VSCode through the anaconda navigator. 
+Once Anaconda has been installed, install [VSCode](https://code.visualstudio.com/download), which serves as a code/text editor and will be the platform through which we run the program. Open VSCode through the anaconda navigator. Note that you will need to open VSCode through the Anaconda navigator each time so that the environment will be loaded correctly.
 
 ### 4. Install Required Packages
 
@@ -38,12 +38,27 @@ conda activate idose_model
 pip install xgboost
 pip install pdfkit
 pip install plotnine
-pip install 
-conda install hdbscan
+pip install umap
 pip install shap
 ```
 
 You are now ready to run the program
+
+## Getting Code Updates
+
+### Saving Local Changes
+
+When you are going to pull down updates that have been made, make sure that you save any changes you have made to `custom_features.txt` or `code_groupings.py` because they will be overwritten when you pull down the new update. Note that the information you want to use to run the model has to be in those specific files, so ensure that you are replacing that exact file with the information you want before you run it. 
+
+To get the latest changes, run the following commands in your VSCode terminal. 
+
+```
+git fetch 
+git reset --hard 
+git pull
+```
+
+Now you should have all the updated features.
 
 ## Program Execution 
 
