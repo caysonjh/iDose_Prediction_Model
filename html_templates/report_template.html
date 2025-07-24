@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Model Evaluation Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        h1 { color: #2c3e50; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+        img { max-width: 100%; margin-bottom: 20px; }
+        
+        .page-break {
+            page-break-before: always;
+            break-before: page;
+        }
+        .section:not(:first-of-type) {
+            page-break-before: always; 
+            padding-top: 10px;
+        }
+        .mac-label {
+            background-color: #e6f2ff;
+            border-left: 5px solid #3399ff;
+            padding: 10px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Model-Feature Information</h1>
+    <table>
+        <tr>
+            <th>Feature</th>
+            <th>Included Codes</th>
+        </tr>
+        {% for feature, codes in feature_info.items() %}
+        <tr>
+            <td>{{ feature }}</td>
+            <td>{{ codes | join(', ') }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    <div class="page-break"></div>
+
+    {% for i in range(macs|length) %}
+    <div class="section">
+        <div class="mac-label">
+            <h2>Evaluation Metrics For {{ macs[i] }}</h2>
+        </div>
+
+        <h2>Class Distributions</h2>
+        <p>{{ class_summaries[i] }}</p>
+
+        <h2>Performance Metrics</h2>
+        <table>
+            {% for name, value in metric_vals[i].items() %}
+            <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+            {% endfor %}
+        </table>
+
+        <h2>Confusion Matrix</h2>
+        <img src="{{ prediction_labels_images[i] }}" alt="Prediction vs True Labels">
+
+    </div>
+    {% endfor %}
+
+    {% for i in range(macs|length) %}
+    <div class="section">
+        <div class="mac-label">
+            <h2>Feature Importance for {{ macs[i] }}</h2>
+        </div>
+
+        <table>
+            <tr><th>Feature</th><th>Importance</th><th>SHAP Score</th><th>Contribution</th></tr>
+            {% for row in feature_tables[i] %}
+            <tr>
+                <td>{{ row.Feature }}</td>
+                <td>{{ "{:.4f}".format(row.Importance) }}</td>
+                <td>{{ "{:.4f}".format(row.SHAP) }}</td>
+                <td>{{ "{:.4f}%".format(row.Contribution) }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    <!-- 
+        <div class="page-break"></div>
+        <h2>Top 20 Important Features</h2>
+        <img src="{{ feature_importance_image }}" alt="Feature Importances"> -->
+    </div>
+    {% endfor %}
+
+    {% for i in range(macs|length) %}
+    <div class="section">
+        <div class="mac-label">
+            <h2>SHAP Summary Plot for {{ macs[i] }}</h2>
+        </div>
+        
+        <img src="{{ shap_summary_images[i] }}" alt="SHAP Summary (Beeswarm)">
+
+    </div>
+    {% endfor %}
+
+    {% for i in range(macs|length) %}
+    <div class="section">
+        {% for feature in top_feature_vals[i][:1] %}
+        <div class="mac-label">
+            <h2>SHAP Force Plot for {{ top_example_table_vals[i][feature][0].NPI }}</h2>
+        </div>
+        
+        <p>Mean val for {{ feature }}: {{ top_example_mean_vals[i][feature] }}</p>
+        <p>Max val for {{ feature }}: {{ top_example_max_vals[i][feature] }}</p>
+        <p>Min val for {{ feature }}: {{ top_example_min_vals[i][feature] }}</p>
+        <img src="{{ shap_force_image_vals[i][feature] }}" alt="SHAP Force {{ feature }}">
+
+        <h3>Top Contributing Examples for {{ feature }}</h3>
+        <table>
+            <tr><th>NPI</th><th>SHAP Value</th><th>Feature Value</th><th>Prediction</th></tr>
+            {% for row in top_example_table_vals[i][feature] %}
+            <tr>
+                <td>{{ row.NPI }}</td>
+                <td>{{ "{:.4f}".format(row.SHAP) }}</td>
+                <td>{{ row.FeatureValue }}</td>
+                <td>{{ "{:.4f}".format(row.Prediction) }}</td>
+            </tr>
+            {% endfor %}
+        {% endfor %}
+        </table>
+    </div>
+    {% endfor %}
+
+
+    {% for i in range(macs|length) %}
+        <div class="section">
+            <div class="mac-label">
+                <h2>Partial Dependence Plots For {{ macs[i] }}</h2>
+            </div>
+            
+            <img src="{{ par_dep_paths[i] }}" alt="Partial Dependence">
+    
+        </div>
+    {% endfor %}
+
+    {% for i in range(macs|length) %}
+    <div class="section">
+        <div class="mac-label">
+            <h2>Permutation Importance For {{ macs[i] }}</h2>
+        </div>
+        
+        <img src="{{ perm_import_paths[i] }}" alt="Permutation Importance">
+
+    </div>
+    {% endfor %}
+
+    <div class="section">
+        <div class="mac-label">
+            <h2>XGB Tree Example</h2>
+        </div>
+
+        <img src="{{ tree_paths[3] }}" alt="XGB Tree Example">
+    </div>
+</body>
+</html>

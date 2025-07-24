@@ -30,6 +30,7 @@ from datetime import datetime
 from sklearn.inspection import partial_dependence, permutation_importance
 from xgboost import plot_tree
 from sklearn.pipeline import make_pipeline
+from imblearn.over_sampling import SMOTE
 
 LESS_RELATED = ['CORNEAL_STUFF', 'REFRACTIVE_DISORDERS', 'GENERAL_OP', 'OCULAR_PROSTHETICS', 'RETINAL_PROCEDURES', 'GENERAL_PROCEDURES']
 DIAGNOSES = ['PREGLAUCOMA', 'OPEN_ANGLE_BORDERLINE', 'ANGLE_CLOSURE', 'OC_HYPERTENSION', 'PRIMARY_OPEN_ANGLE_MILD', 'PRIMARY_OPEN_ANGLE_MOD',
@@ -84,6 +85,8 @@ def main():
     parser.add_argument('--save_model', action='store_true', help='If the model should be saved for future prediction')
     parser.add_argument('--totals', action='store_true', help='Whether to use the raw total values instead of proportions for features', default=False)
     parser.add_argument('--props', action='store_true', help='Whether to use the proportions for feature values', default=True)
+    parser.add_argument('--balance_class', action='store_true', help='If we should perform over/undersampling to even out the classes', default=False)
+    parser.add_argument('--no_mac_split', action='store_false', help='If you do not want to group the values based on MAC', default=True)
     
     args = parser.parse_args()
     
@@ -127,7 +130,7 @@ def main():
             print(f'Error: {e}')
             exit(1)
             
-        X, y = prep_data(data, args.data_consolidation_level, 
+        X, y, X_onehot = prep_data(data, args.data_consolidation_level, 
                         args.time_features is not None, 
                         args.time_features[0] if args.time_features else None,
                         args.time_features[1] if args.time_features else None,
@@ -148,7 +151,10 @@ def main():
         if args.pred_idos_val: 
             clf = pred_idos_val(X, y, args.grid_search, args.data_consolidation_level)
         elif args.pred_idos_bool: 
-            clf = pred_idos_bool(X, y, args.grid_search, args.data_consolidation_level)
+            if not args.no_mac_split: 
+                clf = pred_idos_bool(X_onehot, y, args.grid_search, args.balance_class, args.no_mac_split)
+            else:
+                clf = pred_idos_bool(X, y, args.grid_search, args.balance_class, args.no_mac_split)
         elif args.unsupervised_clusters: 
             run_unsupervised(X, y)
         else:
@@ -163,7 +169,7 @@ def main():
             if drop in pred_df.columns:
                 pred_df = pred_df.drop(drop, axis=1)
                 
-        X_pred, _ = prep_data(pred_df, args.data_consolidation_level, 
+        X_pred, _, X_pred_onehot = prep_data(pred_df, args.data_consolidation_level, 
                     args.time_features is not None, 
                     args.time_features[0] if args.time_features else None,
                     args.time_features[1] if args.time_features else None,
@@ -228,6 +234,7 @@ def calculate_time_features(X, start_year, end_year):
     time_features = pd.DataFrame(time_feats)   
         
     return time_features
+
 
 
 def prep_data(data, data_consolidation_level, time_features=False, start_year=None, end_year=None, custom_feats=None, props=True, totals=False):     
@@ -333,15 +340,16 @@ def prep_data(data, data_consolidation_level, time_features=False, start_year=No
         
         X['MAC'] = get_macs(npi_to_state, state_to_mac, X.index)
         df_dummies = pd.get_dummies(X['MAC'], dummy_na=False, drop_first=False).astype(int)
-        X = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
+        X_onehot = pd.concat([X.drop('MAC', axis=1), df_dummies], axis=1)
     
     if time_features:
         time_df = new_df.loc[:, new_df.columns.str.contains('In 20')]
         X = pd.concat([X, calculate_time_features(time_df, start_year, end_year)], axis=1)
         
     y = new_df[IDOS_VAL_COLUMN]
+    # Why would there need to be a check for NaN here? 
     X = X.fillna(0)
-    return X, y
+    return X, y, X_onehot
  
 
 def run_prediction(X_pred, clf, npi_dict): 
@@ -383,43 +391,70 @@ def pred_idos_val(X, y, grid_search, consolidation_level):
     plot_correlation(clf, X_test, y_test, co_path)
     current_datetime = datetime.now()
     formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
-    generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', output_path=f'reports\\xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
+    generate_model_report(clf, X_test, y_test, X, y, co_path, 'Regression', None, output_path=f'reports\\xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
     
     clf.fit(X, y)
     return clf
 
+from tqdm import tqdm
 
-def pred_idos_bool(X, y, grid_search, consolidation_level): 
+
+def pred_idos_bool(X, y, grid_search, balance_class, mac_split=True): 
     y = y > 0
-        
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2) 
     
-    if grid_search: 
-        clf = xgb.XGBClassifier(objective = 'binary:logistic')
-        grid = GridSearchCV(clf, param_grid=XGB_TEST_PARAMS, scoring='accuracy', cv=5)
-        grid.fit(X_train, y_train)
-        
-        print(grid.best_params_)
-        
-        clf = grid.best_estimator_
-    else: 
-        clf = xgb.XGBClassifier(objective='binary:logistic', n_estimators=XGB_PARAMS['n_estimators'], subsample=XGB_PARAMS['subsample'],
-                                max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'], enable_categorical=True)
-        clf.fit(X_train, y_train)
+    if not mac_split: 
+        X['MAC'] = 'All MACS'
     
-    # y_pred = clf.predict(X_test)
-    # acc = clf.score(X_test, y_test)
-    #print(acc)
-    #get_importances(clf, 10)
-    cm_path = f"{os.getcwd()}\\images\\confusion_matrix.png"
-    plot_confusion_matrix(clf, X_test, y_test, cm_path) 
-    current_datetime = datetime.now()
-    formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
-    generate_model_report(clf, X_test, y_test, X, y, cm_path, 'Binary', output_path=f'reports\\xgb_report_consol{consolidation_level}_{formatted_datetime}.pdf', top_n_features=20)
+    mac_values = {}
+    for mac in np.unique(X['MAC']): 
+        mac_values[mac] = {}
+        
+    for mac, mac_df in X.groupby('MAC'): 
+        y_mac = y.loc[mac_df.index]
+        df = mac_df.drop('MAC', axis=1)
+        X_train, X_test, y_train, y_test = train_test_split(df, y_mac, test_size=0.2) 
+        
+        if balance_class: 
+            if len(X_train) > 6:
+                X_train, y_train = balance_classes(X_train, y_train)
+        
+        if grid_search: 
+            clf = xgb.XGBClassifier(objective = 'binary:logistic')
+            grid = GridSearchCV(clf, param_grid=XGB_TEST_PARAMS, scoring='accuracy', cv=5)
+            grid.fit(X_train, y_train)
+            
+            print(grid.best_params_)
+            
+            clf = grid.best_estimator_
+        else: 
+            clf = xgb.XGBClassifier(objective='binary:logistic', n_estimators=XGB_PARAMS['n_estimators'], subsample=XGB_PARAMS['subsample'],
+                                    max_depth=XGB_PARAMS['max_depth'], learning_rate=XGB_PARAMS['learning_rate'], enable_categorical=True)
+            clf.fit(X_train, y_train)
+     
+        
+        mac_values[mac]['clf'] = clf
+        mac_values[mac]['X_val'] = X_test
+        mac_values[mac]['y_val'] = y_test
+        mac_values[mac]['X_full'] = mac_df.drop('MAC', axis=1)
+        mac_values[mac]['y_full'] = y_mac
+        mac_values[mac]['type'] = 'Binary'
     
-    clf.fit(X, y)
+    features = X.drop('MAC', axis=1).columns.tolist()
+    features = [feature.replace(' Proportion', '') for feature in features]
+    features = [feature.replace(' Total', '') for feature in features]
+    features = [feature for feature in features if feature not in mac_values.keys()]
+    generate_model_report(mac_values, features, top_n_features=20, balance_class=balance_class)
+        
+    #combine_pdfs([f'reports\\temp_report_{mac}.pdf' for mac in np.unique(X['MAC'])])    
+    
+    clf.fit(X.drop('MAC', axis=1), y)
     return clf
 
+def balance_classes(X, y):
+    smote = SMOTE()
+    X_smote, y_smote = smote.fit_resample(X, y)
+    
+    return X_smote, y_smote
 
 def plot_importance(clf, importance_type, max_num_features): 
     importances = clf.get_booster().get_score(importance_type=importance_type)
@@ -495,184 +530,275 @@ def plot_correlation(clf, X_val, y_val, path):
     plt.savefig(path, bbox_inches='tight')
  
  
-def generate_model_report(clf, X_val, y_val, X_full, y_full, image_path, clf_type, output_path='reports\\xgb_report.pdf', top_n_features=10): 
+def generate_model_report(mac_dict, features, top_n_features=10, balance_class=False): 
     
-    #### GENERATE METRIC TABLE ####
+    feature_info = {}
+    for feature in features: 
+        feature_info[feature] = new_feats[feature]
     
-    y_pred = clf.predict(X_val)
-    y_proba = clf.predict_proba(X_val)[:, 1] if hasattr(clf, "predict_proba") else None
+    metric_vals = []
+    feature_tables = []
+    prediction_labels_images = []
+    feature_importance_images = []
+    class_summaries = []
+    shap_summary_images = []
+    shap_feature_tables = []
+    top_feature_vals = []
+    shap_force_image_vals = []
+    top_example_table_vals = []
+    top_example_mean_vals = []
+    top_example_max_vals = []
+    top_example_min_vals = []
+    par_dep_paths = []
+    perm_import_paths = []
+    tree_paths = []
+    macs = []
     
-    class_counts = pd.Series(y_full).value_counts().to_dict()
-    class_labels = {1:'iDose Users', 0:'Non iDose Users'}
-    class_summary = ", ".join([f'{class_labels.get(cl, f"Class {cl}")} ({count})' for cl, count in class_counts.items()])
-    
-    if clf_type == 'Binary':
-        metrics = {
-            "Accuracy": round(accuracy_score(y_val, y_pred), 4),
-            "Precision": round(precision_score(y_val, y_pred), 4),
-            "Recall": round(recall_score(y_val, y_pred), 4),
-            "F1 Score": round(f1_score(y_val, y_pred), 4),
-            "ROC AUC": round(roc_auc_score(y_val, y_proba), 4) if y_proba is not None else "N/A"
-        }  
-    elif clf_type == 'Regression':
-        metrics = {
-            "MAE": round(mean_absolute_error(y_val, y_pred), 4),
-            "MSE": round(mean_squared_error(y_val, y_pred), 4),
-            "RMSE": round(np.sqrt(mean_squared_error(y_val, y_pred)), 4),
-            "R2 Score": round(r2_score(y_val, y_pred), 4)
-        }
-    
-    
-    #### FEATURE IMPORTANCE ####
-    
-    clf.fit(X_full, y_full)
-    feature_df = get_importances(clf, top_n_features)
-    if feature_df is not None: 
-        fi_path = f'{os.getcwd()}\\images\\importances.png'
-       
-       
-    #### SHAP ANALYSIS ####
-    
-    explainer = shap.TreeExplainer(clf, X_full, model_output='probability')
-    shap_values = explainer(X_full)
-    shap_matrix = shap_values.values
-    
-    shap.summary_plot(shap_values, X_full, max_display=X_full.shape[1], show=False)
-    shap_summary_filename = f'{os.getcwd()}\\images\\shap_summary.png'
-    plt.savefig(shap_summary_filename, bbox_inches='tight')
-    plt.close()
+    for mac in tqdm(mac_dict.keys()):
+        clf = mac_dict[mac]['clf']
+        X_val = mac_dict[mac]['X_val']
+        y_val = mac_dict[mac]['y_val']
+        X_full = mac_dict[mac]['X_full']
+        y_full = mac_dict[mac]['y_full']
+        clf_type = mac_dict[mac]['type']
         
-    shap_df = pd.DataFrame(shap_values.values, columns=X_full.columns)
-    mean_shap = shap_df.abs().mean().sort_values(ascending=False)
-    shap_importance = pd.Series(mean_shap, index=X_full.columns).sort_values(ascending=False)
-    xgb_importance = pd.Series(clf.feature_importances_, index=X_full.columns).sort_values(ascending=False)
-    importance_df = pd.DataFrame({
-        'Feature': xgb_importance.index.sort_values(),
-        'SHAP': shap_importance,
-        'XGB': xgb_importance
-    })
-    
-    feature_df = pd.merge(feature_df, importance_df.drop('XGB',axis=1), on='Feature').sort_values(by='SHAP', ascending=False)
-    
-    top_features = mean_shap.head(3).index.tolist()
-    top_example_tables = {} 
-    top_example_means = {}
-    top_example_maxes = {}
-    top_example_mins = {}
-    
-    for feature in top_features: 
-        i = X_full.columns.get_loc(feature)
-        shap_vals = shap_matrix[:, i]
-        top_indices = np.argsort(np.abs(shap_vals))[::-1][:10]
-        top_example_means[feature] = np.mean(X_full[feature])
-        top_example_maxes[feature] = np.max(X_full[feature])
-        top_example_mins[feature] = np.min(X_full[feature])
+        if balance_class: 
+            if (y_val == 1).sum() >= 6 and (y_val == 0).sum() >= 6:
+                X_val, y_val = balance_classes(X_val, y_val)
+            X_full, y_full = balance_classes(X_full, y_full)
         
-        top_examples = []
-        for idx in top_indices: 
-            top_examples.append({
-                "NPI": X_full.index[idx],
-                "SHAP": shap_vals[idx],
-                "FeatureValue": X_full.iloc[idx, i],
-                "Prediction": clf.predict_proba(X_full)[idx, 1]
-            })
+        macs.append(mac)
+    
+        #### GENERATE METRIC TABLE ####
+        
+        y_pred = clf.predict(X_val)
+        y_proba = clf.predict_proba(X_val)[:, 1] if hasattr(clf, "predict_proba") else None
+        
+        class_counts = pd.Series(y_full).value_counts().to_dict()
+        class_labels = {1:'iDose Users', 0:'Non iDose Users'}
+        class_summary = ", ".join([f'{class_labels.get(cl, f"Class {cl}")} ({count})' for cl, count in class_counts.items()])
+        
+        if clf_type == 'Binary':
+            metrics = {
+                "Accuracy": round(accuracy_score(y_val, y_pred), 4),
+                "Precision": round(precision_score(y_val, y_pred), 4),
+                "Recall": round(recall_score(y_val, y_pred), 4),
+                "F1 Score": round(f1_score(y_val, y_pred), 4),
+                "ROC AUC": round(roc_auc_score(y_val, y_proba), 4) if y_proba is not None else "N/A"
+            }  
+        elif clf_type == 'Regression':
+            metrics = {
+                "MAE": round(mean_absolute_error(y_val, y_pred), 4),
+                "MSE": round(mean_squared_error(y_val, y_pred), 4),
+                "RMSE": round(np.sqrt(mean_squared_error(y_val, y_pred)), 4),
+                "R2 Score": round(r2_score(y_val, y_pred), 4)
+            }
             
-        top_example_tables[feature] = top_examples
-    
-    shap_force_images = {}
-    for feature in top_features: 
-        i = X_full.columns.get_loc(feature)
-        shap_vals = shap_matrix[:, i]
-        top_idx = np.argmax(np.abs(shap_vals))
+        #### CONFUSION MATRIX ####
         
-        shap.plots.waterfall(shap_values[top_idx], show=False)
-        filename = f'{os.getcwd()}\\images\\shap_force_{feature}.png'
-        plt.savefig(filename, bbox_inches='tight')
+        cm_path = f"{os.getcwd()}\\images\\confusion_matrix_{mac}.png"
+        plot_confusion_matrix(clf, X_val, y_val, cm_path)
+        
+        #### FEATURE IMPORTANCE ####
+        
+        clf.fit(X_full, y_full)
+        feature_df = get_importances(clf, top_n_features)
+        if feature_df is not None: 
+            fi_path = f'{os.getcwd()}\\images\\importances_{mac}.png'
+        
+        #### SHAP ANALYSIS ####
+        
+        explainer = shap.TreeExplainer(clf, X_full, model_output='probability')
+        shap_values = explainer(X_full)
+        shap_matrix = shap_values.values
+        
+        shap.summary_plot(shap_values, X_full, max_display=X_full.shape[1], show=False)
+        shap_summary_filename = f'{os.getcwd()}\\images\\shap_summary_{mac}.png'
+        plt.savefig(shap_summary_filename, bbox_inches='tight')
+        plt.close()
+            
+        shap_df = pd.DataFrame(shap_values.values, columns=X_full.columns)
+        mean_shap = shap_df.abs().mean().sort_values(ascending=False)
+        shap_importance = pd.Series(mean_shap, index=X_full.columns).sort_values(ascending=False)
+        xgb_importance = pd.Series(clf.feature_importances_, index=X_full.columns).sort_values(ascending=False)
+        importance_df = pd.DataFrame({
+            'Feature': xgb_importance.index.sort_values(),
+            'SHAP': shap_importance,
+            'XGB': xgb_importance
+        })
+        
+        feature_df = pd.merge(feature_df, importance_df.drop('XGB',axis=1), on='Feature').sort_values(by='SHAP', ascending=False)
+        
+        top_features = mean_shap.head(3).index.tolist()
+        top_example_tables = {} 
+        top_example_means = {}
+        top_example_maxes = {}
+        top_example_mins = {}
+        
+        for feature in top_features: 
+            i = X_full.columns.get_loc(feature)
+            shap_vals = shap_matrix[:, i]
+            top_indices = np.argsort(np.abs(shap_vals))[::-1][:10]
+            top_example_means[feature] = np.mean(X_full[feature])
+            top_example_maxes[feature] = np.max(X_full[feature])
+            top_example_mins[feature] = np.min(X_full[feature])
+            
+            top_examples = []
+            for idx in top_indices: 
+                top_examples.append({
+                    "NPI": X_full.index[idx],
+                    "SHAP": shap_vals[idx],
+                    "FeatureValue": X_full.iloc[idx, i],
+                    "Prediction": clf.predict_proba(X_full)[idx, 1]
+                })
+                
+            top_example_tables[feature] = top_examples
+        
+        shap_force_images = {}
+        for feature in top_features: 
+            i = X_full.columns.get_loc(feature)
+            shap_vals = shap_matrix[:, i]
+            top_idx = np.argmax(np.abs(shap_vals))
+            
+            shap.plots.waterfall(shap_values[top_idx], show=False)
+            filename = f'{os.getcwd()}\\images\\shap_force_{feature}_{mac}.png'
+            plt.savefig(filename, bbox_inches='tight')
+            plt.close()
+            
+            shap_force_images[feature] = filename
+            
+        shap_feature_table = mean_shap.reset_index()
+        shap_feature_table.columns = ['Feature', 'Mean_SHAP']
+        shap_feature_table = shap_feature_table.loc[shap_feature_table['Feature'].isin(top_features)]
+        shap_feature_table = shap_feature_table.to_dict(orient='records')
+        
+        #### PARTIAL DEPENDENCE PLOT ###
+
+        from sklearn.ensemble import GradientBoostingClassifier 
+        from sklearn.inspection import PartialDependenceDisplay
+        
+        temp_clf = GradientBoostingClassifier(**XGB_PARAMS)
+        temp_clf.fit(X_full, y_full)
+        new_import = pd.DataFrame({
+            'Feature': X_full.columns, 
+            'Importance': temp_clf.feature_importances_
+        }).sort_values(by='Importance', ascending=False)
+        top_six = new_import['Feature'].to_list()[:6]
+
+        fig, axs = plt.subplots(3, 2, figsize=(15,15))
+        PartialDependenceDisplay.from_estimator(temp_clf, X_full, features=top_six, ax=axs, response_method='predict_proba', method='brute')
+        plt.tight_layout()
+        par_dep_path = f'{os.getcwd()}\\images\\partial_dependence_{mac}.png'
+        plt.savefig(par_dep_path)
         plt.close()
         
-        shap_force_images[feature] = filename
         
-    shap_feature_table = mean_shap.reset_index()
-    shap_feature_table.columns = ['Feature', 'Mean_SHAP']
-    shap_feature_table = shap_feature_table.loc[shap_feature_table['Feature'].isin(top_features)]
-    shap_feature_table = shap_feature_table.to_dict(orient='records')
-    
-    
-    #### PARTIAL DEPENDENCE PLOT ###
-
-    from sklearn.ensemble import GradientBoostingClassifier 
-    from sklearn.inspection import PartialDependenceDisplay
-    
-    temp_clf = GradientBoostingClassifier(**XGB_PARAMS)
-    temp_clf.fit(X_full, y_full)
-    new_import = pd.DataFrame({
-        'Feature': X_full.columns, 
-        'Importance': temp_clf.feature_importances_
-    }).sort_values(by='Importance', ascending=False)
-    top_six = new_import['Feature'].to_list()[:6]
-
-    fig, axs = plt.subplots(3, 2, figsize=(15,15))
-    PartialDependenceDisplay.from_estimator(temp_clf, X_full, features=top_six, ax=axs, response_method='predict_proba', method='brute')
-    plt.tight_layout()
-    par_dep_path = f'{os.getcwd()}\\images\\partial_dependence.png'
-    plt.savefig(par_dep_path)
-    plt.close()
-    
-    
-    #### PERMUTATION IMPORTANCE ####
-    
-    results = permutation_importance(clf, X_full, y_full, n_repeats=10)
-    importances = results.importances_mean 
-    std = results.importances_std 
-    indices = importances.argsort()[::-1]
-    feature_names = X_full.columns[indices]
-    
-    plt.figure(figsize=(8,6))
-    plt.barh(feature_names, importances[indices], xerr=std[indices], align='center')
-    plt.xlabel('Mean Decrease in Accuracy')
-    plt.title('Permutation Importance')
-    plt.gca().invert_yaxis()
-    
-    plt.tight_layout()
-    perm_import_path = f'{os.getcwd()}\\images\\permutation_importance.png'
-    plt.savefig(perm_import_path)
-    plt.close()
-    
-    #### TREE VISUALIZATION ####
-    
-    # fig, ax = plt.subplots(figsize=(20,10), dpi=300)
-    # plot_tree(clf, num_trees=0, rankdir='UT', ax=ax)
-    tree_path = f'{os.getcwd()}\\images\\xgb_tree.png'
-    plot_xgb_tree_manual(clf, tree_path, 0, (50, 10))
+        #### PERMUTATION IMPORTANCE ####
+        
+        results = permutation_importance(clf, X_full, y_full, n_repeats=10)
+        importances = results.importances_mean 
+        std = results.importances_std 
+        indices = importances.argsort()[::-1]
+        feature_names = X_full.columns[indices]
+        
+        plt.figure(figsize=(8,6))
+        plt.barh(feature_names, importances[indices], xerr=std[indices], align='center')
+        plt.xlabel('Mean Decrease in Accuracy')
+        plt.title('Permutation Importance')
+        plt.gca().invert_yaxis()
+        
+        plt.tight_layout()
+        perm_import_path = f'{os.getcwd()}\\images\\permutation_importance_{mac}.png'
+        plt.savefig(perm_import_path)
+        plt.close()
+        
+        #### TREE VISUALIZATION ####
+        
+        # fig, ax = plt.subplots(figsize=(20,10), dpi=300)
+        # plot_tree(clf, num_trees=0, rankdir='UT', ax=ax)
+        tree_path = f'{os.getcwd()}\\images\\xgb_tree_{mac}.png'
+        plot_xgb_tree_manual(clf, tree_path, 0, (50, 10))
+        
+        prediction_labels_images.append(cm_path)
+        feature_importance_images.append(fi_path)        
+        shap_summary_images.append(shap_summary_filename)
+        shap_feature_tables.append(shap_feature_table)
+        metric_vals.append(metrics)
+        class_summaries.append(class_summary)
+        tree_paths.append(tree_path)
+        feature_tables.append(feature_df.to_dict(orient="records"))
+        top_feature_vals.append(top_features)
+        shap_force_image_vals.append(shap_force_images)
+        top_example_table_vals.append(top_example_tables)
+        top_example_mean_vals.append(top_example_means)
+        top_example_max_vals.append(top_example_maxes)
+        top_example_min_vals.append(top_example_mins)
+        par_dep_paths.append(par_dep_path)
+        perm_import_paths.append(perm_import_path)
+        
     
     #### OUTPUT PDF REPORT ####
         
-    env = Environment(loader=FileSystemLoader("."))
+    env = Environment(loader=FileSystemLoader("html_templates"))
     template = env.get_template("report_template.html")
     html_content = template.render(
-        metrics=metrics, 
-        feature_table=feature_df.to_dict(orient="records"),
-        prediction_labels_image=image_path,
-        feature_importance_image=fi_path, 
-        class_summary=class_summary, 
-        shap_summary_image=shap_summary_filename,
-        shap_feature_table=shap_feature_table,
-        top_features=top_features,
-        shap_force_images=shap_force_images,
-        top_example_tables=top_example_tables,
-        top_example_means=top_example_means, 
-        top_example_maxes=top_example_maxes,
-        top_example_mins=top_example_mins, 
-        par_dep_path=par_dep_path, 
-        perm_import_path=perm_import_path, 
-        tree_path=tree_path
+        metric_vals=metric_vals, 
+        feature_tables=feature_tables,
+        prediction_labels_images=prediction_labels_images,
+        feature_importance_images=feature_importance_images, 
+        class_summaries=class_summaries, 
+        shap_summary_images=shap_summary_images,
+        shap_feature_tables=shap_feature_tables,
+        top_feature_vals=top_feature_vals,
+        shap_force_image_vals=shap_force_image_vals,
+        top_example_table_vals=top_example_table_vals,
+        top_example_mean_vals=top_example_mean_vals, 
+        top_example_max_vals=top_example_max_vals,
+        top_example_min_vals=top_example_min_vals, 
+        par_dep_paths=par_dep_paths, 
+        perm_import_paths=perm_import_paths, 
+        tree_paths=tree_paths, 
+        macs=macs,
+        feature_info=feature_info
     )
+    
+    # header_template = env.get_template('header.html')
+    # header_html = header_template.render(mac=mac)
+    # header_path = f'header_{mac}.html'
+    # with open(header_path, 'w', encoding="utf-8") as f: 
+    #     f.write(header_html)
     
     path_wkhtmltopdf = r'wkhtmltopdf.exe'
     config = pdfkit.configuration(wkhtmltopdf=path_wkhtmltopdf)
-    options = {'enable-local-file-access': None}
-    pdfkit.from_string(html_content, output_path, configuration=config, options=options)
-    webbrowser.open_new_tab(f'{os.getcwd()}\\{output_path}')
+    options = {'enable-local-file-access': None,
+            #    'header-html': header_path,
+            #    'margin-top': '15mm'
+               }
+
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")    
+    pdfkit.from_string(html_content, f'reports\\model_report_{formatted_datetime}.pdf', configuration=config, options=options)
+    webbrowser.open_new_tab(f'{os.getcwd()}\\reports\\model_report_{formatted_datetime}.pdf')
+
+
+from pypdf import PdfWriter
+
+def combine_pdfs(files): 
+    merger = PdfWriter()
+    for pdf in files: 
+        merger.append(pdf)
+        
+    
+    current_datetime = datetime.now()
+    formatted_datetime = current_datetime.strftime("%Y%m%d_%H%M%S")
+    merger.write(f'reports\\model_report_{formatted_datetime}.pdf')
+    merger.close()
+    
+    for pdf in files: 
+        os.remove(pdf)    
+        
+    webbrowser.open_new_tab(f'{os.getcwd()}\\reports\\model_report_{formatted_datetime}.pdf')
+
 
 import networkx as nx 
 from scipy.special import expit
